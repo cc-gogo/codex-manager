@@ -25,3 +25,4 @@ recovery-staging-*/
 # Local GitHub release upload files
 release-assets/
 release-notes.md
+release-notes*.md
