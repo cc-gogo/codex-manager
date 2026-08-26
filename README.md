@@ -1,10 +1,12 @@
 # Codex Manager
 
-[中文说明](README-使用说明.md)
+![Codex Manager cover](assets/codex-manager-cover.png)
+
+[涓枃璇存槑](README-浣跨敤璇存槑.md)
 
 A local conversation manager for Codex Desktop. It helps you inspect, organize, back up, import, export, and manage locally stored Codex conversations.
 
-> The application name in Chinese is **Codex 对话管理器**.
+> The application name in Chinese is **Codex 瀵硅瘽绠＄悊鍣?*.
 
 ## Features
 

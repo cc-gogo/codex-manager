@@ -61,9 +61,9 @@ public partial class App : Application
             new ConversationClassifier(),
             new SessionIndexReader(Path.Combine(codexHome, "session_index.jsonl")));
         var processGuard = new ExternalCodexProcessGuard(new SystemProcessSnapshotSource());
-        IConversationDetailProvider? detailProvider = _appServer is null
-            ? null
-            : new ConversationDetailService(_appServer);
+        // The App Server is optional. ConversationDetailService always falls back to
+        // local rollout JSONL files, so installed users can read details offline.
+        IConversationDetailProvider detailProvider = new ConversationDetailService(_appServer);
         Func<DeletionPlan, IReadOnlyList<ConversationRecord>, Task<IPermanentDeleteExecutor>> deletionFactory =
             async (_, records) =>
             {

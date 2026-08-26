@@ -10,7 +10,12 @@ if (-not (Test-Path -LiteralPath $iscc)) { throw "Inno Setup compiler not found:
 
 & $dotnet test (Join-Path $root 'CodexConversationManager.sln') --no-restore
 if ($LASTEXITCODE -ne 0) { throw "Tests failed." }
-& $dotnet publish (Join-Path $root 'src\CodexConversationManager.App\CodexConversationManager.App.csproj') -c Release -o $publish --no-restore
+
+$appProject = Join-Path $root 'src\CodexConversationManager.App\CodexConversationManager.App.csproj'
+& $dotnet restore $appProject -r win-x64
+if ($LASTEXITCODE -ne 0) { throw "Windows runtime restore failed." }
+
+& $dotnet publish $appProject -c Release -r win-x64 --self-contained true -p:PublishSingleFile=false -o $publish --no-restore
 if ($LASTEXITCODE -ne 0) { throw "Windows publish failed." }
 & $iscc $installerScript
 if ($LASTEXITCODE -ne 0) { throw "Installer build failed." }

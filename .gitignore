@@ -21,3 +21,7 @@ installer-output/
 publish-macos-arm64/
 publish-macos-x64/
 recovery-staging-*/
+
+# Local GitHub release upload files
+release-assets/
+release-notes.md
