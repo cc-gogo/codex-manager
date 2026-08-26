@@ -1,0 +1,50 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{6102C930-89E0-4BCF-A266-9C48A1E482A9}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CodexConversationManager.Core", "src\CodexConversationManager.Core\CodexConversationManager.Core.csproj", "{58DF704A-1916-4E64-BFA4-F5F947D7AA76}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CodexConversationManager.App", "src\CodexConversationManager.App\CodexConversationManager.App.csproj", "{2654910E-ABFD-4FD2-B740-E65BB3111B98}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{99C33F4D-BF75-494A-9616-3645163C58D3}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CodexConversationManager.Tests", "tests\CodexConversationManager.Tests\CodexConversationManager.Tests.csproj", "{E9F03E1C-4653-4871-A215-444F481C5B4B}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CodexConversationManager.Mac", "src\CodexConversationManager.Mac\CodexConversationManager.Mac.csproj", "{5153155F-A266-43A3-8908-4766A35AE3A6}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{58DF704A-1916-4E64-BFA4-F5F947D7AA76}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{58DF704A-1916-4E64-BFA4-F5F947D7AA76}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{58DF704A-1916-4E64-BFA4-F5F947D7AA76}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{58DF704A-1916-4E64-BFA4-F5F947D7AA76}.Release|Any CPU.Build.0 = Release|Any CPU
+		{2654910E-ABFD-4FD2-B740-E65BB3111B98}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2654910E-ABFD-4FD2-B740-E65BB3111B98}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2654910E-ABFD-4FD2-B740-E65BB3111B98}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2654910E-ABFD-4FD2-B740-E65BB3111B98}.Release|Any CPU.Build.0 = Release|Any CPU
+		{E9F03E1C-4653-4871-A215-444F481C5B4B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{E9F03E1C-4653-4871-A215-444F481C5B4B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{E9F03E1C-4653-4871-A215-444F481C5B4B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{E9F03E1C-4653-4871-A215-444F481C5B4B}.Release|Any CPU.Build.0 = Release|Any CPU
+		{5153155F-A266-43A3-8908-4766A35AE3A6}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{5153155F-A266-43A3-8908-4766A35AE3A6}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{5153155F-A266-43A3-8908-4766A35AE3A6}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{5153155F-A266-43A3-8908-4766A35AE3A6}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{58DF704A-1916-4E64-BFA4-F5F947D7AA76} = {6102C930-89E0-4BCF-A266-9C48A1E482A9}
+		{2654910E-ABFD-4FD2-B740-E65BB3111B98} = {6102C930-89E0-4BCF-A266-9C48A1E482A9}
+		{E9F03E1C-4653-4871-A215-444F481C5B4B} = {99C33F4D-BF75-494A-9616-3645163C58D3}
+		{5153155F-A266-43A3-8908-4766A35AE3A6} = {6102C930-89E0-4BCF-A266-9C48A1E482A9}
+	EndGlobalSection
+EndGlobal

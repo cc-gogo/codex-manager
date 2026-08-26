@@ -1,0 +1,23 @@
+# User-specific and generated content
+data/
+logs/
+build-cache/
+build-tools/
+publish/
+bin/
+obj/
+
+# Local Codex data and editor settings
+.codex/
+.vs/
+*.user
+
+# Temporary files
+*.tmp-*
+*.bak
+
+# Release artifacts and local recovery data
+installer-output/
+publish-macos-arm64/
+publish-macos-x64/
+recovery-staging-*/

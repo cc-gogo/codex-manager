@@ -1,0 +1,58 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="CodexConversationManager.Mac.MainWindow"
+        Width="1180" Height="760" MinWidth="900" MinHeight="560"
+        Title="Codex 对话管理器">
+  <Grid RowDefinitions="Auto,*" Margin="18">
+    <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,14">
+      <StackPanel>
+        <TextBlock FontSize="22" FontWeight="SemiBold" Text="Codex 对话管理器" />
+        <TextBlock Foreground="#667085" Text="Codex 本地对话管理" />
+      </StackPanel>
+      <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
+        <TextBox Width="260" Watermark="Codex 数据目录" Text="{Binding CodexHome}" />
+        <Button Padding="12,7" Content="刷新" Command="{Binding RefreshCommand}" />
+        <Button Padding="12,7" Content="同步到当前登录模式" Command="{Binding SyncCommand}" />
+        <Button Padding="12,7" Content="导出 Markdown" Command="{Binding ExportCommand}" />
+        <Button Padding="12,7" Content="导入对话" Command="{Binding ImportCommand}" />
+        <Button Padding="12,7" Content="退出 Codex" Command="{Binding ExitCommand}" />
+        <Button Padding="12,7" Content="重启 Codex" Command="{Binding RestartCommand}" />
+        <ComboBox Width="86" SelectedIndex="{Binding LanguageIndex}"><ComboBoxItem>中文</ComboBoxItem><ComboBoxItem>English</ComboBoxItem></ComboBox>
+      </StackPanel>
+    </Grid>
+    <Grid Grid.Row="1" ColumnDefinitions="180,*,360">
+      <Border Grid.Column="0" BorderBrush="#D0D5DD" BorderThickness="1" Padding="10">
+        <StackPanel Spacing="8">
+          <TextBlock FontWeight="SemiBold" Text="分类" />
+          <ListBox ItemsSource="{Binding Categories}" SelectedItem="{Binding SelectedCategory}" />
+          <TextBlock Margin="0,16,0,0" FontWeight="SemiBold" Text="状态" />
+          <TextBlock TextWrapping="Wrap" Foreground="#667085" Text="{Binding Status}" />
+          <Button Content="备份选中对话" Command="{Binding BackupCommand}" />
+          <Button Content="删除选中对话" Command="{Binding DeleteCommand}" />
+        </StackPanel>
+      </Border>
+      <Border Grid.Column="1" BorderBrush="#D0D5DD" BorderThickness="1" Padding="10">
+        <ListBox ItemsSource="{Binding VisibleRows}" SelectedItem="{Binding SelectedRow}">
+          <ListBox.ItemTemplate>
+            <DataTemplate>
+              <StackPanel Orientation="Horizontal" Margin="4,7" Spacing="8">
+                <CheckBox IsChecked="{Binding IsSelected}" VerticalAlignment="Center" />
+                <StackPanel>
+                <TextBlock FontWeight="SemiBold" Text="{Binding DisplayTitle}" TextTrimming="CharacterEllipsis" />
+                <TextBlock FontSize="11" Foreground="#667085" Text="{Binding Id}" />
+                </StackPanel>
+              </StackPanel>
+            </DataTemplate>
+          </ListBox.ItemTemplate>
+        </ListBox>
+      </Border>
+      <Border Grid.Column="2" BorderBrush="#D0D5DD" BorderThickness="1" Padding="14">
+        <StackPanel Spacing="9">
+          <TextBlock FontSize="17" FontWeight="SemiBold" Text="对话信息" />
+          <TextBlock TextWrapping="Wrap" Text="{Binding DetailText}" />
+          <TextBox Foreground="#667085" TextWrapping="Wrap" Text="{Binding SourcePaths}" IsReadOnly="True" BorderThickness="0" Background="Transparent" />
+        </StackPanel>
+      </Border>
+    </Grid>
+  </Grid>
+</Window>

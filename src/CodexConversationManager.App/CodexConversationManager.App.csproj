@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <AssemblyName>CodexConversationManager.App</AssemblyName>
+    <RootNamespace>CodexConversationManager.App</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\CodexConversationManager.Core\CodexConversationManager.Core.csproj" />
+  </ItemGroup>
+</Project>

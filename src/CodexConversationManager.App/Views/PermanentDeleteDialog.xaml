@@ -1,0 +1,15 @@
+<Window x:Class="CodexConversationManager.App.Views.PermanentDeleteDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:loc="clr-namespace:CodexConversationManager.App.Markup"
+        Title="{loc:Loc Key=ConfirmDelete}" Width="440" SizeToContent="Height" ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner">
+    <StackPanel Margin="20">
+        <TextBlock FontSize="18" FontWeight="SemiBold" Text="{loc:Loc Key=DeleteConversation}" />
+        <TextBlock Margin="0,12,0,12" TextWrapping="Wrap" Foreground="#9D1C13" Text="{Binding WarningText}" />
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button Padding="14,7" Margin="0,0,8,0" IsCancel="True" Content="{loc:Loc Key=Cancel}" />
+            <Button Padding="14,7" Background="#B42318" Foreground="White" IsEnabled="{Binding CanConfirm}" Click="Confirm_Click" Content="{loc:Loc Key=ConfirmDeleteButton}" />
+        </StackPanel>
+    </StackPanel>
+</Window>

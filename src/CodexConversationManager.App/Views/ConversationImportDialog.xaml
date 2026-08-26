@@ -1,0 +1,69 @@
+<Window x:Class="CodexConversationManager.App.Views.ConversationImportDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:loc="clr-namespace:CodexConversationManager.App.Markup"
+        Title="{loc:Loc Key=ImportTitle}" Width="760" Height="680" MinWidth="680" MinHeight="560"
+        WindowStartupLocation="CenterOwner" ResizeMode="CanResize">
+    <Grid Margin="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" />
+            <RowDefinition Height="Auto" /><RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <StackPanel>
+            <TextBlock FontSize="18" FontWeight="SemiBold" Text="{loc:Loc Key=ImportTitle}" />
+            <TextBlock Margin="0,6,0,0" Foreground="#475467" TextWrapping="Wrap"
+                       Text="{loc:Loc Key=ImportDescription}" />
+        </StackPanel>
+        <StackPanel Grid.Row="1" Margin="0,16,0,10" Orientation="Horizontal">
+            <Button Padding="12,7" Click="SelectFiles_Click" Content="{loc:Loc Key=ChooseJsonl}" />
+            <Button Margin="8,0,0,0" Padding="12,7" Click="StopCodex_Click" Content="{loc:Loc Key=ExitCodex}" />
+            <Button Margin="8,0,0,0" Padding="12,7" Click="CheckCodex_Click" Content="{loc:Loc Key=CheckAndRefresh}" />
+            <TextBlock Margin="12,8,0,0" Text="{Binding Status}" TextWrapping="Wrap" />
+        </StackPanel>
+        <Grid Grid.Row="2">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="260" /></Grid.ColumnDefinitions>
+            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+            <TextBlock FontWeight="SemiBold" Text="{loc:Loc Key=Preview}" />
+            <ListBox Grid.Row="1" Margin="0,7,12,0" ItemsSource="{Binding Candidates}">
+                <ListBox.ItemTemplate><DataTemplate>
+                    <StackPanel Margin="4,5">
+                        <TextBox FontWeight="SemiBold" Text="{Binding Title, UpdateSourceTrigger=PropertyChanged}" ToolTip="可在导入前修改对话名称" />
+                        <TextBlock FontFamily="Consolas" FontSize="11" Foreground="#667085" Text="{Binding TargetId}" />
+                        <TextBlock FontSize="11" Foreground="#667085" TextWrapping="Wrap">
+                            <Run Text="目标 provider：" /><Run Text="{Binding TargetProvider, Mode=OneWay}" />
+                        </TextBlock>
+                    </StackPanel>
+                </DataTemplate></ListBox.ItemTemplate>
+            </ListBox>
+            <StackPanel Grid.Column="1" Grid.RowSpan="2">
+                <TextBlock FontWeight="SemiBold" Text="{loc:Loc Key=ImportDestination}" />
+                <RadioButton GroupName="ImportDestination" Margin="0,8,0,0" Content="{loc:Loc Key=ProjectlessRecent}" Tag="Projectless" Click="Destination_Click" IsChecked="True" />
+                <RadioButton GroupName="ImportDestination" Margin="0,6,0,0" Content="{loc:Loc Key=ExistingProject}" Tag="ExistingProject" Click="Destination_Click" />
+                <ComboBox Margin="0,5,0,0" ItemsSource="{Binding Projects}" DisplayMemberPath="Name" SelectedValuePath="Id" SelectedValue="{Binding SelectedProjectId, Mode=TwoWay}" />
+                <RadioButton GroupName="ImportDestination" Margin="0,8,0,0" Content="{loc:Loc Key=NewProject}" Tag="NewProject" Click="Destination_Click" />
+                <Button Margin="0,5,0,0" Padding="8,5" Click="ChooseParent_Click" Content="{loc:Loc Key=ChooseParent}" />
+                <TextBox Margin="0,5,0,0" Text="{Binding NewProjectParent, UpdateSourceTrigger=PropertyChanged}" />
+                <TextBox Margin="0,5,0,0" ToolTip="新项目名称" Text="{Binding NewProjectName, UpdateSourceTrigger=PropertyChanged}" />
+                <TextBlock Margin="0,18,0,0" FontWeight="SemiBold" Text="{loc:Loc Key=LoginMode}" />
+                <RadioButton GroupName="ImportProvider" Margin="0,7,0,0" Content="{loc:Loc Key=CurrentLogin}" Tag="CurrentLogin" Click="ProviderMode_Click" IsChecked="True" />
+                <RadioButton GroupName="ImportProvider" Margin="0,6,0,0" Content="{loc:Loc Key=PreserveProvider}" Tag="PreserveSource" Click="ProviderMode_Click" />
+                <TextBlock Margin="0,18,0,0" FontWeight="SemiBold" Text="{loc:Loc Key=DuplicateId}" />
+                <RadioButton GroupName="DuplicateResolution" Margin="0,7,0,0" Content="{loc:Loc Key=RejectDuplicate}" Tag="Reject" Click="DuplicateResolution_Click" IsChecked="True" />
+                <RadioButton GroupName="DuplicateResolution" Margin="0,6,0,0" Content="{loc:Loc Key=GenerateDuplicate}" Tag="GenerateNewId" Click="DuplicateResolution_Click" />
+            </StackPanel>
+        </Grid>
+        <StackPanel Grid.Row="3" Margin="0,12,0,0">
+            <TextBlock Foreground="#B42318" Text="{loc:Loc Key=Issues}" />
+            <ItemsControl ItemsSource="{Binding Issues}">
+                <ItemsControl.ItemTemplate><DataTemplate>
+                    <TextBlock Foreground="#B42318" TextWrapping="Wrap" Text="{Binding Message}" />
+                </DataTemplate></ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </StackPanel>
+        <StackPanel Grid.Row="4" Margin="0,14,0,0" Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button Margin="0,0,8,0" Padding="14,7" Click="Close_Click" Content="{loc:Loc Key=Cancel}" />
+            <Button Margin="0,0,8,0" Padding="14,7" IsEnabled="{Binding CanRestart}" Click="RestartCodex_Click" Content="{loc:Loc Key=RestartCodex}" />
+            <Button Padding="14,7" Background="#1769AA" Foreground="White" IsEnabled="{Binding CanApply}" Click="Apply_Click" Content="{loc:Loc Key=StartImport}" />
+        </StackPanel>
+    </Grid>
+</Window>
