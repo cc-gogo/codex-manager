@@ -1,4 +1,6 @@
 using Xunit;
+using System.Security.Cryptography;
+using System.Windows.Media.Imaging;
 
 namespace CodexConversationManager.Tests.ViewModels;
 
@@ -124,5 +126,18 @@ public sealed class MainWindowLayoutTests
 
         Assert.Contains("Icon=\"pack://application:,,,/Assets/codex-manager-icon.png\"", xaml);
         Assert.Contains("Assets\\codex-manager-icon.png", project);
+    }
+
+    [Fact]
+    public void Installer_icon_is_not_the_retired_white_background_icon()
+    {
+        var root = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+        var iconPath = Path.Combine(root, "assets", "codex-manager.ico");
+        var icon = File.ReadAllBytes(iconPath);
+        var hash = Convert.ToHexString(SHA256.HashData(icon));
+        var decoder = new IconBitmapDecoder(new Uri(iconPath), BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
+
+        Assert.Equal("D6C362A73E7FE909240C03F94E5B35977D0BA854C1C56162D142EEFE30C601ED", hash);
+        Assert.Equal(new[] { 16, 24, 32, 48, 64, 128, 256 }, decoder.Frames.Select(frame => frame.PixelWidth).Order());
     }
 }

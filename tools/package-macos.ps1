@@ -2,6 +2,7 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 $dotnet = Join-Path $root 'build-tools\dotnet\dotnet.exe'
 $project = Join-Path $root 'src\CodexConversationManager.Mac\CodexConversationManager.Mac.csproj'
+$version = '0.1.7'
 if (-not (Test-Path -LiteralPath $dotnet)) { throw "Bundled .NET SDK not found: $dotnet" }
 
 foreach ($rid in @('osx-arm64', 'osx-x64')) {
@@ -27,7 +28,8 @@ foreach ($rid in @('osx-arm64', 'osx-x64')) {
 <key>CFBundleExecutable</key><string>CodexConversationManager.Mac</string>
 <key>CFBundleIdentifier</key><string>com.codexconversationmanager.mac</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleVersion</key><string>1.0.0</string>
+<key>CFBundleShortVersionString</key><string>$version</string>
+<key>CFBundleVersion</key><string>$version</string>
 </dict></plist>
 "@
     Set-Content -LiteralPath (Join-Path $contents 'Info.plist') -Value $plist -Encoding utf8
