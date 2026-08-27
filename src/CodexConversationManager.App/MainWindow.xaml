@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:CodexConversationManager.App.ViewModels"
         xmlns:loc="clr-namespace:CodexConversationManager.App.Markup"
-        Title="{loc:Loc Key=AppTitle}" Height="760" Width="1280" MinHeight="580" MinWidth="980"
+        Title="{loc:Loc Key=AppTitle}" Icon="pack://application:,,,/Assets/codex-manager-icon.png" Height="760" Width="1280" MinHeight="580" MinWidth="980"
         WindowStartupLocation="CenterScreen" FontFamily="Microsoft YaHei UI, Segoe UI">
     <Window.Resources>
         <Style TargetType="Button">

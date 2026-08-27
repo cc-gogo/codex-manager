@@ -114,4 +114,15 @@ public sealed class MainWindowLayoutTests
         Assert.Contains("Key=ImportConversation", xaml);
         Assert.Contains("ImportConversation_Click", xaml);
     }
+
+    [Fact]
+    public void Main_window_uses_the_transparent_png_icon_instead_of_the_executable_fallback_icon()
+    {
+        var root = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+        var xaml = File.ReadAllText(Path.Combine(root, "src", "CodexConversationManager.App", "MainWindow.xaml"));
+        var project = File.ReadAllText(Path.Combine(root, "src", "CodexConversationManager.App", "CodexConversationManager.App.csproj"));
+
+        Assert.Contains("Icon=\"pack://application:,,,/Assets/codex-manager-icon.png\"", xaml);
+        Assert.Contains("Assets\\codex-manager-icon.png", project);
+    }
 }
