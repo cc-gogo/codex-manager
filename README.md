@@ -4,7 +4,7 @@
   <img src="assets/codex-manager-cover.png" alt="Codex Manager" width="360">
 </p>
 
-[Chinese README](README-%E4%BD%BF%E7%94%A8%E8%AF%B4%E6%98%8E.md)
+[中文说明](README-%E4%BD%BF%E7%94%A8%E8%AF%B4%E6%98%8E.md)
 
 A local conversation manager for Codex Desktop. It helps you inspect, organize, back up, import, export, and manage locally stored Codex conversations.
 
