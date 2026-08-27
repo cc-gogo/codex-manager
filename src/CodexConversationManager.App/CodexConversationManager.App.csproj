@@ -5,6 +5,7 @@
     <UseWPF>true</UseWPF>
     <AssemblyName>CodexConversationManager.App</AssemblyName>
     <RootNamespace>CodexConversationManager.App</RootNamespace>
+    <ApplicationIcon>..\..\assets\codex-manager.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\CodexConversationManager.Core\CodexConversationManager.Core.csproj" />
