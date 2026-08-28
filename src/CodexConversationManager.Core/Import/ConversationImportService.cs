@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization.Metadata;
+using System.Text.RegularExpressions;
 using CodexConversationManager.Core.LocalData;
 using Microsoft.Data.Sqlite;
 
@@ -33,7 +34,7 @@ public sealed class ConversationImportService(CodexPaths paths, string backupRoo
         if (request.Preview.Issues.Count > 0) throw new InvalidOperationException("导入列表中存在未解决的问题，请先修正后再导入。");
 
         var destinationFiles = request.Preview.Candidates
-            .Select(candidate => Path.Combine(paths.Sessions, $"rollout-{candidate.TargetId}.jsonl"))
+            .Select(candidate => GetDestinationPath(candidate))
             .ToList();
         var backup = await ImportBackupService.CreateAsync(paths, destinationFiles, backupRoot, cancellationToken).ConfigureAwait(false);
         var createdFiles = new List<string>();
@@ -53,7 +54,7 @@ public sealed class ConversationImportService(CodexPaths paths, string backupRoo
             foreach (var candidate in request.Preview.Candidates)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var target = Path.Combine(paths.Sessions, $"rollout-{candidate.TargetId}.jsonl");
+                var target = GetDestinationPath(candidate);
                 await WriteRolloutAsync(candidate, target, request.ProviderMode, cancellationToken).ConfigureAwait(false);
                 createdFiles.Add(target);
                 importedFiles.Add(target);
@@ -72,6 +73,18 @@ public sealed class ConversationImportService(CodexPaths paths, string backupRoo
                 Directory.Delete(createdProjectDirectory);
             throw;
         }
+    }
+
+    private string GetDestinationPath(ConversationImportCandidate candidate)
+    {
+        var sourceName = Path.GetFileName(candidate.SourcePath);
+        var match = Regex.Match(sourceName,
+            @"^rollout-(?<stamp>\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2})-(?<id>[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\.jsonl$",
+            RegexOptions.CultureInvariant);
+        var fileName = match.Success
+            ? $"rollout-{match.Groups["stamp"].Value}-{candidate.TargetId}.jsonl"
+            : $"rollout-{candidate.CreatedAt.ToLocalTime():yyyy-MM-dd'T'HH-mm-ss}-{candidate.TargetId}.jsonl";
+        return Path.Combine(paths.Sessions, fileName);
     }
 
     private async Task<string?> PrepareProjectAsync(ImportDestination destination, CancellationToken cancellationToken)

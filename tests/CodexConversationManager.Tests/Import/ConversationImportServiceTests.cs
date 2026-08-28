@@ -50,6 +50,20 @@ public sealed class ConversationImportServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Apply_preserves_canonical_timestamp_in_imported_rollout_filename()
+    {
+        var paths = await CreateCodexRootAsync();
+        var source = await WriteSourceAsync("rollout-2026-08-28T10-39-29-11111111-1111-7111-8111-111111111111.jsonl");
+        var preview = await PreviewAsync(source, paths, "daily");
+
+        var result = await new ConversationImportService(paths, Path.Combine(_root, "backups"))
+            .ApplyAsync(new ConversationImportRequest(preview, new ExistingProjectDestination("daily"), ImportProviderMode.CurrentLogin));
+
+        Assert.Equal("rollout-2026-08-28T10-39-29-11111111-1111-7111-8111-111111111111.jsonl",
+            Path.GetFileName(Assert.Single(result.ImportedFiles)));
+    }
+
+    [Fact]
     public async Task Apply_restores_state_and_does_not_leave_rollout_when_global_state_write_fails()
     {
         var paths = await CreateCodexRootAsync();
@@ -135,9 +149,9 @@ public sealed class ConversationImportServiceTests : IDisposable
         }
     }
 
-    private async Task<string> WriteSourceAsync()
+    private async Task<string> WriteSourceAsync(string? fileName = null)
     {
-        var path = Path.Combine(_root, "source.jsonl");
+        var path = Path.Combine(_root, fileName ?? "source.jsonl");
         await File.WriteAllTextAsync(path, new JsonObject
         {
             ["type"] = "session_meta",
