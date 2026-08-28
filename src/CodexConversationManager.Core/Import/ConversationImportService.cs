@@ -141,6 +141,10 @@ public sealed class ConversationImportService(CodexPaths paths, string backupRoo
                 value["payload"] is JsonObject payload)
             {
                 payload["id"] = candidate.TargetId;
+                // Imported JSONL files have no paginated-history service behind them.
+                // Use Codex's local rollout reader instead.
+                if (string.Equals(payload["history_mode"]?.GetValue<string>(), "paginated", StringComparison.OrdinalIgnoreCase))
+                    payload["history_mode"] = "legacy";
                 if (providerMode == ImportProviderMode.CurrentLogin)
                     payload["model_provider"] = candidate.TargetProvider;
             }

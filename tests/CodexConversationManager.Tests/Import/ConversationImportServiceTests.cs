@@ -65,6 +65,20 @@ public sealed class ConversationImportServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Apply_converts_paginated_history_to_local_legacy_history()
+    {
+        var paths = await CreateCodexRootAsync();
+        var source = await WriteSourceAsync(historyMode: "paginated");
+        var preview = await PreviewAsync(source, paths, "daily");
+
+        var result = await new ConversationImportService(paths, Path.Combine(_root, "backups"))
+            .ApplyAsync(new ConversationImportRequest(preview, new ExistingProjectDestination("daily"), ImportProviderMode.CurrentLogin));
+
+        var metadata = JsonNode.Parse((await File.ReadAllLinesAsync(result.ImportedFiles.Single()))[0])!.AsObject();
+        Assert.Equal("legacy", metadata["payload"]?["history_mode"]?.GetValue<string>());
+    }
+
+    [Fact]
     public async Task Apply_restores_state_and_does_not_leave_rollout_when_global_state_write_fails()
     {
         var paths = await CreateCodexRootAsync();
@@ -150,10 +164,10 @@ public sealed class ConversationImportServiceTests : IDisposable
         }
     }
 
-    private async Task<string> WriteSourceAsync(string? fileName = null)
+    private async Task<string> WriteSourceAsync(string? fileName = null, string? historyMode = null)
     {
         var path = Path.Combine(_root, fileName ?? "source.jsonl");
-        await File.WriteAllTextAsync(path, new JsonObject
+        var metadata = new JsonObject
         {
             ["type"] = "session_meta",
             ["payload"] = new JsonObject
@@ -161,7 +175,9 @@ public sealed class ConversationImportServiceTests : IDisposable
                 ["id"] = SourceId, ["timestamp"] = "2026-08-18T00:00:00Z", ["cwd"] = "D:\\AI\\daily",
                 ["source"] = "cli", ["model_provider"] = "openai", ["title"] = "Imported"
             }
-        }.ToJsonString() + Environment.NewLine + "{\"type\":\"event_msg\",\"payload\":{\"thread_id\":\"" + SourceId + "\"}}\n");
+        };
+        if (historyMode is not null) metadata["payload"]!["history_mode"] = historyMode;
+        await File.WriteAllTextAsync(path, metadata.ToJsonString() + Environment.NewLine + "{\"type\":\"event_msg\",\"payload\":{\"thread_id\":\"" + SourceId + "\"}}\n");
         return path;
     }
 
