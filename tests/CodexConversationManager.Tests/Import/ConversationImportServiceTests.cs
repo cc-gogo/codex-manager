@@ -79,6 +79,26 @@ public sealed class ConversationImportServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Apply_converts_item_completed_messages_to_legacy_events()
+    {
+        var paths = await CreateCodexRootAsync();
+        var source = await WriteModernSourceAsync();
+        var preview = await PreviewAsync(source, paths, "daily");
+
+        var result = await new ConversationImportService(paths, Path.Combine(_root, "backups"))
+            .ApplyAsync(new ConversationImportRequest(preview, new ExistingProjectDestination("daily"), ImportProviderMode.CurrentLogin));
+
+        var records = (await File.ReadAllLinesAsync(result.ImportedFiles.Single()))
+            .Select(line => JsonNode.Parse(line)!.AsObject()).ToList();
+        Assert.Contains(records, record => record["type"]?.GetValue<string>() == "event_msg" &&
+            record["payload"]?["type"]?.GetValue<string>() == "user_message" &&
+            record["payload"]?["message"]?.GetValue<string>() == "hello from modern");
+        Assert.Contains(records, record => record["type"]?.GetValue<string>() == "event_msg" &&
+            record["payload"]?["type"]?.GetValue<string>() == "agent_message" &&
+            record["payload"]?["message"]?.GetValue<string>() == "hello from assistant");
+    }
+
+    [Fact]
     public async Task Apply_restores_state_and_does_not_leave_rollout_when_global_state_write_fails()
     {
         var paths = await CreateCodexRootAsync();
@@ -178,6 +198,41 @@ public sealed class ConversationImportServiceTests : IDisposable
         };
         if (historyMode is not null) metadata["payload"]!["history_mode"] = historyMode;
         await File.WriteAllTextAsync(path, metadata.ToJsonString() + Environment.NewLine + "{\"type\":\"event_msg\",\"payload\":{\"thread_id\":\"" + SourceId + "\"}}\n");
+        return path;
+    }
+
+    private async Task<string> WriteModernSourceAsync()
+    {
+        var path = Path.Combine(_root, "modern.jsonl");
+        var lines = new[]
+        {
+            new JsonObject
+            {
+                ["type"] = "session_meta",
+                ["payload"] = new JsonObject
+                {
+                    ["id"] = SourceId, ["timestamp"] = "2026-08-18T00:00:00Z", ["cwd"] = "D:\\AI\\daily",
+                    ["source"] = "cli", ["model_provider"] = "openai", ["title"] = "Modern", ["history_mode"] = "paginated"
+                }
+            },
+            new JsonObject
+            {
+                ["type"] = "event_msg", ["payload"] = new JsonObject
+                {
+                    ["type"] = "item_completed", ["thread_id"] = SourceId, ["turn_id"] = "turn-1",
+                    ["item"] = new JsonObject { ["type"] = "UserMessage", ["content"] = new JsonArray(new JsonObject { ["type"] = "text", ["text"] = "hello from modern" }) }
+                }
+            },
+            new JsonObject
+            {
+                ["type"] = "event_msg", ["payload"] = new JsonObject
+                {
+                    ["type"] = "item_completed", ["thread_id"] = SourceId, ["turn_id"] = "turn-1",
+                    ["item"] = new JsonObject { ["type"] = "AgentMessage", ["content"] = new JsonArray(new JsonObject { ["type"] = "Text", ["text"] = "hello from assistant" }) }
+                }
+            }
+        };
+        await File.WriteAllLinesAsync(path, lines.Select(line => line.ToJsonString()));
         return path;
     }
 

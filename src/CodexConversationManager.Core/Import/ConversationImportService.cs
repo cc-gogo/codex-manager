@@ -149,6 +149,8 @@ public sealed class ConversationImportService(CodexPaths paths, string backupRoo
                     payload["model_provider"] = candidate.TargetProvider;
             }
             transformed.Add(node.ToJsonString());
+            if (node is JsonObject modernRecord && TryCreateLegacyMessageEvent(modernRecord, out var legacyEvent))
+                transformed.Add(legacyEvent.ToJsonString());
         }
 
         if (transformed.Count == 0) throw new InvalidOperationException("导入文件为空。");
@@ -164,6 +166,55 @@ public sealed class ConversationImportService(CodexPaths paths, string backupRoo
         {
             if (File.Exists(temporary)) File.Delete(temporary);
         }
+    }
+
+    private static bool TryCreateLegacyMessageEvent(JsonObject record, out JsonObject legacyEvent)
+    {
+        legacyEvent = null!;
+        if (!string.Equals(record["type"]?.GetValue<string>(), "event_msg", StringComparison.Ordinal) ||
+            record["payload"] is not JsonObject payload ||
+            !string.Equals(payload["type"]?.GetValue<string>(), "item_completed", StringComparison.Ordinal) ||
+            payload["item"] is not JsonObject item)
+            return false;
+
+        var itemType = item["type"]?.GetValue<string>();
+        var legacyType = itemType switch
+        {
+            "UserMessage" => "user_message",
+            "AgentMessage" => "agent_message",
+            _ => null
+        };
+        if (legacyType is null || item["content"] is not JsonArray content)
+            return false;
+
+        var text = string.Join("\n", content
+            .OfType<JsonObject>()
+            .Where(part => string.Equals(part["type"]?.GetValue<string>(), "text", StringComparison.OrdinalIgnoreCase))
+            .Select(part => part["text"]?.GetValue<string>())
+            .Where(value => !string.IsNullOrWhiteSpace(value)));
+        if (string.IsNullOrWhiteSpace(text))
+            return false;
+
+        var legacyPayload = new JsonObject
+        {
+            ["type"] = legacyType,
+            ["message"] = text
+        };
+        CopyString(payload, legacyPayload, "thread_id");
+        CopyString(payload, legacyPayload, "turn_id");
+        legacyEvent = new JsonObject
+        {
+            ["type"] = "event_msg",
+            ["payload"] = legacyPayload
+        };
+        CopyString(record, legacyEvent, "timestamp");
+        return true;
+    }
+
+    private static void CopyString(JsonObject source, JsonObject target, string property)
+    {
+        if (source[property]?.GetValue<string>() is { } value)
+            target[property] = value;
     }
 
     private async Task InsertStateRowsAsync(
