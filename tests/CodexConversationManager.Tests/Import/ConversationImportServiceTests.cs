@@ -59,8 +59,9 @@ public sealed class ConversationImportServiceTests : IDisposable
         var result = await new ConversationImportService(paths, Path.Combine(_root, "backups"))
             .ApplyAsync(new ConversationImportRequest(preview, new ExistingProjectDestination("daily"), ImportProviderMode.CurrentLogin));
 
-        Assert.Equal("rollout-2026-08-28T10-39-29-11111111-1111-7111-8111-111111111111.jsonl",
-            Path.GetFileName(Assert.Single(result.ImportedFiles)));
+        var imported = Assert.Single(result.ImportedFiles);
+        Assert.Equal("rollout-2026-08-28T10-39-29-11111111-1111-7111-8111-111111111111.jsonl", Path.GetFileName(imported));
+        Assert.Equal(Path.Combine(paths.Sessions, "2026", "08", "28"), Path.GetDirectoryName(imported));
     }
 
     [Fact]

@@ -81,10 +81,12 @@ public sealed class ConversationImportService(CodexPaths paths, string backupRoo
         var match = Regex.Match(sourceName,
             @"^rollout-(?<stamp>\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2})-(?<id>[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\.jsonl$",
             RegexOptions.CultureInvariant);
-        var fileName = match.Success
-            ? $"rollout-{match.Groups["stamp"].Value}-{candidate.TargetId}.jsonl"
-            : $"rollout-{candidate.CreatedAt.ToLocalTime():yyyy-MM-dd'T'HH-mm-ss}-{candidate.TargetId}.jsonl";
-        return Path.Combine(paths.Sessions, fileName);
+        var stamp = match.Success
+            ? match.Groups["stamp"].Value
+            : candidate.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd'T'HH-mm-ss");
+        var fileName = $"rollout-{stamp}-{candidate.TargetId}.jsonl";
+        var date = DateTime.ParseExact(stamp, "yyyy-MM-dd'T'HH-mm-ss", null);
+        return Path.Combine(paths.Sessions, date.ToString("yyyy"), date.ToString("MM"), date.ToString("dd"), fileName);
     }
 
     private async Task<string?> PrepareProjectAsync(ImportDestination destination, CancellationToken cancellationToken)
