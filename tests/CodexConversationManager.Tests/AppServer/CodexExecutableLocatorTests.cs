@@ -23,9 +23,79 @@ public sealed class CodexExecutableLocatorTests
             File.WriteAllText(Path.Combine(npmDirectory, "codex.cmd"), "fixture");
             File.WriteAllBytes(nativeBinary, [0]);
 
-            var result = CodexExecutableLocator.Locate([packagedDirectory, npmDirectory]);
+            var result = CodexExecutableLocator.Locate(
+                [packagedDirectory, npmDirectory], Path.Combine(root, "empty-local-app-data"),
+                versionProbe: _ => "codex-cli 0.130.0");
 
             Assert.Equal(nativeBinary, result);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void Locate_prefers_newer_desktop_binary_over_older_path_cli()
+    {
+        var root = Path.Combine(AppContext.BaseDirectory, "locator-fixture", Guid.NewGuid().ToString("N"));
+        var pathBin = Path.Combine(root, "path-bin");
+        var localAppData = Path.Combine(root, "local-app-data");
+        var desktopBinary = Path.Combine(
+            localAppData, "OpenAI", "Codex", "bin", "desktop-0151", "codex.exe");
+        var pathBinary = Path.Combine(pathBin, "codex.exe");
+
+        try
+        {
+            Directory.CreateDirectory(pathBin);
+            Directory.CreateDirectory(Path.GetDirectoryName(desktopBinary)!);
+            File.WriteAllBytes(pathBinary, [0]);
+            File.WriteAllBytes(desktopBinary, [0]);
+
+            var result = CodexExecutableLocator.Locate(
+                [pathBin], localAppData,
+                path => path.Contains("desktop-0151", StringComparison.OrdinalIgnoreCase)
+                    ? "codex-cli 0.151.0-alpha.7.2"
+                    : "codex-cli 0.130.0");
+
+            Assert.Equal(desktopBinary, result);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void Locate_skips_candidates_that_cannot_report_a_version()
+    {
+        var root = Path.Combine(AppContext.BaseDirectory, "locator-fixture", Guid.NewGuid().ToString("N"));
+        var pathBin = Path.Combine(root, "path-bin");
+        var localAppData = Path.Combine(root, "local-app-data");
+        var brokenBinary = Path.Combine(pathBin, "codex.exe");
+        var workingBinary = Path.Combine(
+            localAppData, "OpenAI", "Codex", "bin", "working", "codex.exe");
+
+        try
+        {
+            Directory.CreateDirectory(pathBin);
+            Directory.CreateDirectory(Path.GetDirectoryName(workingBinary)!);
+            File.WriteAllBytes(brokenBinary, [0]);
+            File.WriteAllBytes(workingBinary, [0]);
+
+            var result = CodexExecutableLocator.Locate(
+                [pathBin], localAppData,
+                path => path.Contains("working", StringComparison.OrdinalIgnoreCase)
+                    ? "codex-cli 0.150.0-alpha.8"
+                    : null);
+
+            Assert.Equal(workingBinary, result);
         }
         finally
         {
