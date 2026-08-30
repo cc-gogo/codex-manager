@@ -247,8 +247,8 @@ public sealed class LocalEvidenceReaderTests
 
             var snapshot = await new CodexProjectSidebarReader(globalStatePath, statePath).ReadAsync();
 
-            Assert.Equal(6, snapshot.RecentThreadIds!.Count);
-            Assert.DoesNotContain("00000000-0000-7000-8000-000000000001", snapshot.RecentThreadIds);
+            Assert.Equal(7, snapshot.RecentThreadIds!.Count);
+            Assert.Contains("00000000-0000-7000-8000-000000000001", snapshot.RecentThreadIds);
         }
         finally
         {
@@ -259,7 +259,7 @@ public sealed class LocalEvidenceReaderTests
     }
 
     [Fact]
-    public async Task Project_sidebar_reader_does_not_count_project_pinned_or_sectioned_threads_as_recent()
+    public async Task Project_sidebar_reader_does_not_count_pinned_or_sectioned_threads_as_recent_but_keeps_project_threads()
     {
         var globalStatePath = Path.GetTempFileName();
         var statePath = Path.GetTempFileName();
@@ -287,6 +287,7 @@ public sealed class LocalEvidenceReaderTests
 
             Assert.Equal(
                 [
+                    "00000000-0000-7000-8000-000000000001",
                     "00000000-0000-7000-8000-000000000004",
                     "00000000-0000-7000-8000-000000000005"
                 ],
@@ -387,7 +388,54 @@ public sealed class LocalEvidenceReaderTests
                     "22222222-2222-7222-8222-222222222222",
                     "33333333-3333-7333-8333-333333333333",
                     "44444444-4444-7444-8444-444444444444",
-                    "55555555-5555-7555-8555-555555555555"
+                    "55555555-5555-7555-8555-555555555555",
+                    "66666666-6666-7666-8666-666666666666"
+                ],
+                snapshot.RecentThreadIds);
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            File.Delete(globalStatePath);
+            File.Delete(statePath);
+        }
+    }
+
+    [Fact]
+    public async Task Project_sidebar_reader_excludes_only_threads_explicitly_ordered_in_project_sidebar()
+    {
+        var globalStatePath = Path.GetTempFileName();
+        var statePath = Path.GetTempFileName();
+        try
+        {
+            await File.WriteAllTextAsync(globalStatePath, """
+                {
+                  "sidebar-project-thread-orders": {
+                    "project-1": { "threadIds": ["00000000-0000-7000-8000-000000000001"] }
+                  }
+                }
+                """);
+            await using (var connection = new SqliteConnection($"Data Source={statePath}"))
+            {
+                await connection.OpenAsync();
+                await using var command = connection.CreateCommand();
+                command.CommandText = """
+                    CREATE TABLE threads (
+                        id TEXT, archived INTEGER, preview TEXT, recency_at_ms INTEGER,
+                        project_id TEXT, thread_section_id TEXT, is_pinned INTEGER);
+                    INSERT INTO threads VALUES ('00000000-0000-7000-8000-000000000001', 0, 'project sidebar', 3000, 'project-1', NULL, 0);
+                    INSERT INTO threads VALUES ('00000000-0000-7000-8000-000000000002', 0, 'project assignment only', 2000, 'project-1', NULL, 0);
+                    INSERT INTO threads VALUES ('00000000-0000-7000-8000-000000000003', 0, 'unassigned', 1000, NULL, NULL, 0);
+                    """;
+                await command.ExecuteNonQueryAsync();
+            }
+
+            var snapshot = await new CodexProjectSidebarReader(globalStatePath, statePath).ReadAsync();
+
+            Assert.Equal(
+                [
+                    "00000000-0000-7000-8000-000000000002",
+                    "00000000-0000-7000-8000-000000000003"
                 ],
                 snapshot.RecentThreadIds);
         }

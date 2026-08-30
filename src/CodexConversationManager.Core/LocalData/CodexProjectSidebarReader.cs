@@ -5,8 +5,8 @@ namespace CodexConversationManager.Core.LocalData;
 
 public sealed class CodexProjectSidebarReader(string path, string? stateDatabasePath = null) : ICodexProjectSidebarProvider
 {
-    // Codex currently renders six projectless conversations in its Recent sidebar section.
-    private const int SidebarRecentWindowSize = 6;
+    // Codex currently renders seven conversations in its Recent sidebar section.
+    private const int SidebarRecentWindowSize = 7;
 
     public async Task<CodexProjectSidebarSnapshot> ReadAsync(CancellationToken cancellationToken = default)
     {
@@ -70,7 +70,7 @@ public sealed class CodexProjectSidebarReader(string path, string? stateDatabase
             .Where(id => id is not null && Guid.TryParseExact(id, "D", out _))
             .Cast<string>()
             .ToList();
-        var modern = await ReadModernSidebarAsync(cancellationToken).ConfigureAwait(false);
+        var modern = await ReadModernSidebarAsync(sidebarOrders, cancellationToken).ConfigureAwait(false);
         if (modern.Projects.Count > 0)
         {
             projects = modern.Projects;
@@ -103,7 +103,9 @@ public sealed class CodexProjectSidebarReader(string path, string? stateDatabase
         };
     }
 
-    private async Task<ModernSidebarState> ReadModernSidebarAsync(CancellationToken cancellationToken)
+    private async Task<ModernSidebarState> ReadModernSidebarAsync(
+        IReadOnlyDictionary<string, IReadOnlyList<string>> sidebarOrders,
+        CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(stateDatabasePath) || !File.Exists(stateDatabasePath))
         {
@@ -131,8 +133,10 @@ public sealed class CodexProjectSidebarReader(string path, string? stateDatabase
             threadProjectIds = await ReadModernProjectAssignmentsAsync(connection, threadIds, cancellationToken).ConfigureAwait(false);
         }
 
-        var recentThreadIds = await ReadRecentThreadIdsAsync(connection, columns, false, cancellationToken).ConfigureAwait(false);
-        var archivedRecentThreadIds = await ReadRecentThreadIdsAsync(connection, columns, true, cancellationToken).ConfigureAwait(false);
+        var projectSidebarThreadIds = sidebarOrders.Values.SelectMany(ids => ids)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var recentThreadIds = await ReadRecentThreadIdsAsync(connection, columns, false, projectSidebarThreadIds, cancellationToken).ConfigureAwait(false);
+        var archivedRecentThreadIds = await ReadRecentThreadIdsAsync(connection, columns, true, projectSidebarThreadIds, cancellationToken).ConfigureAwait(false);
         var pinnedThreadIds = columns.Contains("is_pinned")
             ? await ReadThreadIdsAsync(connection, "COALESCE(is_pinned, 0) <> 0", cancellationToken).ConfigureAwait(false)
             : [];
@@ -214,6 +218,7 @@ public sealed class CodexProjectSidebarReader(string path, string? stateDatabase
         SqliteConnection connection,
         IReadOnlySet<string> columns,
         bool archived,
+        IReadOnlySet<string> excludedThreadIds,
         CancellationToken cancellationToken)
     {
         var recencyExpression = columns.Contains("recency_at_ms")
@@ -224,7 +229,6 @@ public sealed class CodexProjectSidebarReader(string path, string? stateDatabase
                 ? "COALESCE(recency_at * 1000, 0)"
                 : "0";
         var previewFilter = columns.Contains("preview") ? "AND COALESCE(preview, '') <> ''" : string.Empty;
-        var projectFilter = columns.Contains("project_id") ? "AND project_id IS NULL" : string.Empty;
         var sectionFilter = columns.Contains("thread_section_id") ? "AND thread_section_id IS NULL" : string.Empty;
         var pinnedFilter = columns.Contains("is_pinned") ? "AND COALESCE(is_pinned, 0) = 0" : string.Empty;
         var sql = $"""
@@ -232,11 +236,9 @@ public sealed class CodexProjectSidebarReader(string path, string? stateDatabase
             FROM threads
             WHERE archived = $archived
               {previewFilter}
-              {projectFilter}
-              {sectionFilter}
+            {sectionFilter}
               {pinnedFilter}
             ORDER BY {recencyExpression} DESC, id
-            LIMIT {SidebarRecentWindowSize}
             """;
         var ids = new List<string>();
         await using var command = connection.CreateCommand();
@@ -246,10 +248,10 @@ public sealed class CodexProjectSidebarReader(string path, string? stateDatabase
         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
         {
             var id = reader.GetString(0);
-            if (Guid.TryParseExact(id, "D", out _)) ids.Add(id);
+            if (Guid.TryParseExact(id, "D", out _) && !excludedThreadIds.Contains(id)) ids.Add(id);
         }
 
-        return ids;
+        return ids.Take(SidebarRecentWindowSize).ToList();
     }
 
     private static async Task<IReadOnlyList<string>> ReadThreadIdsAsync(
