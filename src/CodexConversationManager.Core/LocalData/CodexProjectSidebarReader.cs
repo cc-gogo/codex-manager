@@ -78,16 +78,21 @@ public sealed class CodexProjectSidebarReader(string path, string? stateDatabase
 
         if (modern.ThreadProjectIds is not null)
         {
-            foreach (var id in modern.ThreadIds)
-            {
-                assignments.Remove(id);
-            }
-
             foreach (var (threadId, projectId) in modern.ThreadProjectIds)
             {
                 assignments[threadId] = modernProjectIdMap.GetValueOrDefault(projectId, projectId);
             }
         }
+
+        AddWorkspaceRootAssignments(assignments, projects, modern.Threads);
+        AddMissingProjectSidebarOrders(sidebarOrders, projects, assignments,
+            modern.Threads.Select(thread => thread.Id));
+        projects = projects.Where(project =>
+                sidebarOrders.ContainsKey(project.Id) ||
+                assignments.Values.Contains(project.Id, StringComparer.OrdinalIgnoreCase) ||
+                modern.Projects.Any(modernProject =>
+                    string.Equals(modernProject.Id, project.Id, StringComparison.OrdinalIgnoreCase)))
+            .ToList();
 
         return new CodexProjectSidebarSnapshot(
             projects.OrderBy(project => project.Order).ThenBy(project => project.Name, StringComparer.OrdinalIgnoreCase).ToList(),
@@ -128,13 +133,7 @@ public sealed class CodexProjectSidebarReader(string path, string? stateDatabase
             remainingLegacy.Remove(legacy.Id);
         }
 
-        foreach (var legacy in remainingLegacy.Values)
-        {
-            if (sidebarOrders.ContainsKey(legacy.Id))
-            {
-                merged.Add(legacy);
-            }
-        }
+        merged.AddRange(remainingLegacy.Values);
 
         return (merged, modernProjectIdMap);
     }
@@ -145,6 +144,72 @@ public sealed class CodexProjectSidebarReader(string path, string? stateDatabase
             string.Equals(NormalizePath(legacyRoot), NormalizePath(modernRoot), StringComparison.OrdinalIgnoreCase)));
 
     private static string NormalizePath(string path) => path.Trim().Replace('/', '\\').TrimEnd('\\');
+
+    private static void AddMissingProjectSidebarOrders(
+        IDictionary<string, IReadOnlyList<string>> sidebarOrders,
+        IReadOnlyList<CodexProject> projects,
+        IReadOnlyDictionary<string, string> assignments,
+        IEnumerable<string> threadIdsBySidebarOrder)
+    {
+        var knownProjectIds = projects.Select(project => project.Id)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var orderedThreadIds = threadIdsBySidebarOrder
+            .Concat(assignments.Keys.OrderBy(id => id, StringComparer.OrdinalIgnoreCase))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        foreach (var project in projects)
+        {
+            if (sidebarOrders.ContainsKey(project.Id)) continue;
+
+            var ids = orderedThreadIds
+                .Where(id => assignments.TryGetValue(id, out var projectId) &&
+                             knownProjectIds.Contains(projectId) &&
+                             string.Equals(projectId, project.Id, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            if (ids.Count > 0)
+            {
+                sidebarOrders[project.Id] = ids;
+            }
+        }
+    }
+
+    private static void AddWorkspaceRootAssignments(
+        IDictionary<string, string> assignments,
+        IReadOnlyList<CodexProject> projects,
+        IEnumerable<ModernThread> threads)
+    {
+        foreach (var thread in threads)
+        {
+            if (assignments.ContainsKey(thread.Id) || string.IsNullOrWhiteSpace(thread.WorkingDirectory)) continue;
+
+            var matchingProjects = projects
+                .SelectMany(project => project.RootPaths.Select(root => (project, root)))
+                .Where(candidate => IsWithinProjectRoot(thread.WorkingDirectory, candidate.root))
+                .OrderByDescending(candidate => NormalizePath(candidate.root).Length)
+                .ToList();
+            if (matchingProjects.Count == 0) continue;
+
+            var longestRootLength = NormalizePath(matchingProjects[0].root).Length;
+            var closestProjectIds = matchingProjects
+                .Where(candidate => NormalizePath(candidate.root).Length == longestRootLength)
+                .Select(candidate => candidate.project.Id)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            if (closestProjectIds.Count == 1)
+            {
+                assignments[thread.Id] = closestProjectIds[0];
+            }
+        }
+    }
+
+    private static bool IsWithinProjectRoot(string workingDirectory, string projectRoot)
+    {
+        var directory = NormalizePath(workingDirectory);
+        var root = NormalizePath(projectRoot);
+        return string.Equals(directory, root, StringComparison.OrdinalIgnoreCase) ||
+               directory.StartsWith(root + "\\", StringComparison.OrdinalIgnoreCase);
+    }
 
     private async Task<ModernSidebarState> ReadModernSidebarAsync(
         IReadOnlyDictionary<string, IReadOnlyList<string>> sidebarOrders,
@@ -170,12 +235,10 @@ public sealed class CodexProjectSidebarReader(string path, string? stateDatabase
         }
 
         var projects = await ReadModernProjectsAsync(connection, cancellationToken).ConfigureAwait(false);
-        var threadIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        Dictionary<string, string>? threadProjectIds = null;
-        if (columns.Contains("project_id"))
-        {
-            threadProjectIds = await ReadModernProjectAssignmentsAsync(connection, threadIds, cancellationToken).ConfigureAwait(false);
-        }
+        var threads = await ReadModernThreadsAsync(connection, columns, cancellationToken).ConfigureAwait(false);
+        var threadProjectIds = threads
+            .Where(thread => !string.IsNullOrWhiteSpace(thread.ProjectId))
+            .ToDictionary(thread => thread.Id, thread => thread.ProjectId!, StringComparer.OrdinalIgnoreCase);
 
         var projectSidebarThreadIds = sidebarOrders.Values.SelectMany(ids => ids)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -190,7 +253,7 @@ public sealed class CodexProjectSidebarReader(string path, string? stateDatabase
             ? await ReadThreadSectionsAsync(connection, cancellationToken).ConfigureAwait(false)
             : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var threadSections = await ReadModernSectionsAsync(connection, cancellationToken).ConfigureAwait(false);
-        return new ModernSidebarState(projects, threadIds, threadProjectIds, recentThreadIds, archivedRecentThreadIds,
+        return new ModernSidebarState(projects, threads, threadProjectIds, recentThreadIds, archivedRecentThreadIds,
             pinnedThreadIds, threadSectionIds, threadSections);
     }
 
@@ -236,28 +299,29 @@ public sealed class CodexProjectSidebarReader(string path, string? stateDatabase
         return projects;
     }
 
-    private static async Task<Dictionary<string, string>> ReadModernProjectAssignmentsAsync(
+    private static async Task<IReadOnlyList<ModernThread>> ReadModernThreadsAsync(
         SqliteConnection connection,
-        ISet<string> threadIds,
+        IReadOnlySet<string> columns,
         CancellationToken cancellationToken)
     {
-        var assignments = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var projectIdColumn = columns.Contains("project_id") ? "project_id" : "NULL";
+        var cwdColumn = columns.Contains("cwd") ? "cwd" : "NULL";
+        var recencyExpression = GetRecencyExpression(columns);
+        var threads = new List<ModernThread>();
         await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT id, project_id FROM threads";
+        command.CommandText = $"SELECT id, {projectIdColumn}, {cwdColumn} FROM threads ORDER BY {recencyExpression} DESC, id";
         await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
         {
             if (reader.IsDBNull(0)) continue;
             var id = reader.GetString(0);
             if (!Guid.TryParseExact(id, "D", out _)) continue;
-            threadIds.Add(id);
-            if (!reader.IsDBNull(1) && !string.IsNullOrWhiteSpace(reader.GetString(1)))
-            {
-                assignments[id] = reader.GetString(1);
-            }
+            var projectId = reader.IsDBNull(1) ? null : reader.GetString(1);
+            var workingDirectory = reader.IsDBNull(2) ? null : reader.GetString(2);
+            threads.Add(new ModernThread(id, projectId, workingDirectory));
         }
 
-        return assignments;
+        return threads;
     }
 
     private static async Task<IReadOnlyList<string>> ReadRecentThreadIdsAsync(
@@ -268,13 +332,7 @@ public sealed class CodexProjectSidebarReader(string path, string? stateDatabase
         IReadOnlyList<string>? explicitRecentThreadIds,
         CancellationToken cancellationToken)
     {
-        var recencyExpression = columns.Contains("recency_at_ms")
-            ? columns.Contains("recency_at")
-                ? "COALESCE(recency_at_ms, recency_at * 1000, 0)"
-                : "COALESCE(recency_at_ms, 0)"
-            : columns.Contains("recency_at")
-                ? "COALESCE(recency_at * 1000, 0)"
-                : "0";
+        var recencyExpression = GetRecencyExpression(columns);
         var previewFilter = columns.Contains("preview") ? "AND COALESCE(preview, '') <> ''" : string.Empty;
         var sectionFilter = columns.Contains("thread_section_id") ? "AND thread_section_id IS NULL" : string.Empty;
         var pinnedFilter = columns.Contains("is_pinned") ? "AND COALESCE(is_pinned, 0) = 0" : string.Empty;
@@ -306,6 +364,14 @@ public sealed class CodexProjectSidebarReader(string path, string? stateDatabase
         var visibleIds = ids.ToHashSet(StringComparer.OrdinalIgnoreCase);
         return explicitRecentThreadIds.Where(visibleIds.Contains).ToList();
     }
+
+    private static string GetRecencyExpression(IReadOnlySet<string> columns) => columns.Contains("recency_at_ms")
+        ? columns.Contains("recency_at")
+            ? "COALESCE(recency_at_ms, recency_at * 1000, 0)"
+            : "COALESCE(recency_at_ms, 0)"
+        : columns.Contains("recency_at")
+            ? "COALESCE(recency_at * 1000, 0)"
+            : "0";
 
     private static async Task<IReadOnlyList<string>> ReadThreadIdsAsync(
         SqliteConnection connection,
@@ -384,7 +450,7 @@ public sealed class CodexProjectSidebarReader(string path, string? stateDatabase
 
     private sealed record ModernSidebarState(
         List<CodexProject> Projects,
-        IReadOnlySet<string> ThreadIds,
+        IReadOnlyList<ModernThread> Threads,
         Dictionary<string, string>? ThreadProjectIds,
         IReadOnlyList<string> RecentThreadIds,
         IReadOnlyList<string> ArchivedRecentThreadIds,
@@ -392,8 +458,10 @@ public sealed class CodexProjectSidebarReader(string path, string? stateDatabase
         IReadOnlyDictionary<string, string> ThreadSectionIds,
         IReadOnlyList<CodexThreadSection> ThreadSections)
     {
-        public static ModernSidebarState Empty { get; } = new([], new HashSet<string>(StringComparer.OrdinalIgnoreCase), null, [], [], [], new Dictionary<string, string>(), []);
+        public static ModernSidebarState Empty { get; } = new([], [], null, [], [], [], new Dictionary<string, string>(), []);
     }
+
+    private sealed record ModernThread(string Id, string? ProjectId, string? WorkingDirectory);
 
     private static string? Value(JsonNode? node) => node is JsonValue value && value.TryGetValue<string>(out var text) ? text : null;
 }

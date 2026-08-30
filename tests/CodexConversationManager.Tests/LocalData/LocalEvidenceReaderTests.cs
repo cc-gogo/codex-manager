@@ -186,6 +186,103 @@ public sealed class LocalEvidenceReaderTests
     }
 
     [Fact]
+    public async Task Project_sidebar_reader_uses_direct_global_assignment_ids_when_a_project_has_no_explicit_sidebar_order()
+    {
+        var globalStatePath = Path.GetTempFileName();
+        var statePath = Path.GetTempFileName();
+        try
+        {
+            await File.WriteAllTextAsync(globalStatePath, """
+                {
+                  "local-projects": {
+                    "journal": { "id": "journal", "name": "期刊codex", "rootPaths": ["D:\\journal"] },
+                    "railway": { "id": "railway", "name": "railway", "rootPaths": ["D:\\railway"] }
+                  },
+                  "project-order": ["journal", "railway"],
+                  "thread-project-assignments": {
+                    "00000000-0000-7000-8000-000000000001": { "projectId": "journal" },
+                    "00000000-0000-7000-8000-000000000002": { "projectId": "journal" },
+                    "00000000-0000-7000-8000-000000000003": { "projectId": "railway" }
+                  }
+                }
+                """);
+            await using (var connection = new SqliteConnection($"Data Source={statePath}"))
+            {
+                await connection.OpenAsync();
+                await using var command = connection.CreateCommand();
+                command.CommandText = """
+                    CREATE TABLE threads (id TEXT, archived INTEGER, preview TEXT, recency_at_ms INTEGER, project_id TEXT);
+                    INSERT INTO threads VALUES ('00000000-0000-7000-8000-000000000001', 0, 'older journal', 100, NULL);
+                    INSERT INTO threads VALUES ('00000000-0000-7000-8000-000000000002', 0, 'newer journal', 300, NULL);
+                    INSERT INTO threads VALUES ('00000000-0000-7000-8000-000000000003', 0, 'railway', 200, NULL);
+                    """;
+                await command.ExecuteNonQueryAsync();
+            }
+
+            var snapshot = await new CodexProjectSidebarReader(globalStatePath, statePath).ReadAsync();
+
+            Assert.Equal(
+                ["00000000-0000-7000-8000-000000000002", "00000000-0000-7000-8000-000000000001"],
+                snapshot.SidebarThreadOrders["journal"]);
+            Assert.Equal(["00000000-0000-7000-8000-000000000003"], snapshot.SidebarThreadOrders["railway"]);
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            File.Delete(globalStatePath);
+            File.Delete(statePath);
+        }
+    }
+
+    [Fact]
+    public async Task Project_sidebar_reader_uses_registered_project_roots_when_assignment_migration_is_incomplete()
+    {
+        var globalStatePath = Path.GetTempFileName();
+        var statePath = Path.GetTempFileName();
+        try
+        {
+            await File.WriteAllTextAsync(globalStatePath, """
+                {
+                  "local-projects": {
+                    "railway": { "id": "railway", "name": "railway", "rootPaths": ["D:\\AI\\railway"] }
+                  },
+                  "project-order": ["railway"]
+                }
+                """);
+            await using (var connection = new SqliteConnection($"Data Source={statePath}"))
+            {
+                await connection.OpenAsync();
+                await using var command = connection.CreateCommand();
+                command.CommandText = """
+                    CREATE TABLE projects (id TEXT, name TEXT, position INTEGER);
+                    CREATE TABLE project_roots (project_id TEXT, path TEXT, position INTEGER);
+                    CREATE TABLE threads (id TEXT, archived INTEGER, preview TEXT, recency_at_ms INTEGER, project_id TEXT, cwd TEXT);
+                    INSERT INTO projects VALUES ('modern-railway', 'railway', 0);
+                    INSERT INTO project_roots VALUES ('modern-railway', 'D:\AI\railway', 0);
+                    INSERT INTO threads VALUES ('00000000-0000-7000-8000-000000000001', 0, 'older railway', 100, NULL, 'D:\AI\railway');
+                    INSERT INTO threads VALUES ('00000000-0000-7000-8000-000000000002', 0, 'newer railway', 300, NULL, 'D:\AI\railway\src');
+                    INSERT INTO threads VALUES ('00000000-0000-7000-8000-000000000003', 0, 'not railway', 200, NULL, 'D:\AI\other');
+                    """;
+                await command.ExecuteNonQueryAsync();
+            }
+
+            var snapshot = await new CodexProjectSidebarReader(globalStatePath, statePath).ReadAsync();
+
+            Assert.Equal(
+                ["00000000-0000-7000-8000-000000000002", "00000000-0000-7000-8000-000000000001"],
+                snapshot.SidebarThreadOrders["railway"]);
+            Assert.Equal("railway", snapshot.ThreadProjectIds["00000000-0000-7000-8000-000000000001"]);
+            Assert.False(snapshot.ThreadProjectIds.ContainsKey("00000000-0000-7000-8000-000000000003"));
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            File.Delete(globalStatePath);
+            File.Delete(statePath);
+        }
+    }
+
+    [Fact]
     public async Task Project_sidebar_reader_lists_all_unarchived_threads_for_recent_sidebar_candidates()
     {
         var globalStatePath = Path.GetTempFileName();
@@ -221,7 +318,48 @@ public sealed class LocalEvidenceReaderTests
     }
 
     [Fact]
-    public async Task Project_sidebar_reader_uses_the_explicit_recent_index_and_ignores_stale_or_unindexed_threads()
+    public async Task Project_sidebar_reader_preserves_the_saved_projectless_sidebar_order()
+    {
+        var globalStatePath = Path.GetTempFileName();
+        var statePath = Path.GetTempFileName();
+        try
+        {
+            await File.WriteAllTextAsync(globalStatePath, """
+                {
+                  "projectless-thread-ids": [
+                    "00000000-0000-7000-8000-000000000001",
+                    "00000000-0000-7000-8000-000000000002"
+                  ]
+                }
+                """);
+            await using (var connection = new SqliteConnection($"Data Source={statePath}"))
+            {
+                await connection.OpenAsync();
+                await using var command = connection.CreateCommand();
+                command.CommandText = """
+                    CREATE TABLE threads (id TEXT, archived INTEGER, preview TEXT, recency_at_ms INTEGER);
+                    INSERT INTO threads VALUES ('00000000-0000-7000-8000-000000000001', 0, 'older', 100);
+                    INSERT INTO threads VALUES ('00000000-0000-7000-8000-000000000002', 0, 'newer', 200);
+                    """;
+                await command.ExecuteNonQueryAsync();
+            }
+
+            var snapshot = await new CodexProjectSidebarReader(globalStatePath, statePath).ReadAsync();
+
+            Assert.Equal(
+                ["00000000-0000-7000-8000-000000000001", "00000000-0000-7000-8000-000000000002"],
+                snapshot.RecentThreadIds);
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            File.Delete(globalStatePath);
+            File.Delete(statePath);
+        }
+    }
+
+    [Fact]
+    public async Task Project_sidebar_reader_preserves_explicit_recent_order_and_filters_non_visible_ids()
     {
         var globalStatePath = Path.GetTempFileName();
         var statePath = Path.GetTempFileName();
