@@ -503,7 +503,8 @@ public sealed class MainViewModelTests
 
         await viewModel.RefreshAsync();
         inventory.CompleteReconciliation([appServer]);
-        await WaitUntilAsync(() => viewModel.Rows.Single().Title == "Codex sidebar title");
+        await WaitUntilAsync(() => viewModel.Rows.Count == 1 &&
+            viewModel.Rows[0].Title == "Codex sidebar title");
 
         Assert.True(dispatcherCalls > 0);
     }

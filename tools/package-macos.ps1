@@ -2,7 +2,7 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 $dotnet = Join-Path $root 'build-tools\dotnet\dotnet.exe'
 $project = Join-Path $root 'src\CodexConversationManager.Mac\CodexConversationManager.Mac.csproj'
-$version = '0.1.11'
+$version = '0.2.0'
 if (-not (Test-Path -LiteralPath $dotnet)) { throw "Bundled .NET SDK not found: $dotnet" }
 
 foreach ($rid in @('osx-arm64', 'osx-x64')) {

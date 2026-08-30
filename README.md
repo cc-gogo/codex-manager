@@ -24,6 +24,12 @@ A local conversation manager for Codex Desktop. It helps you inspect, organize, 
 - Exit or restart Codex from the manager
 - Build Windows and macOS releases
 
+## Codex compatibility
+
+Codex Manager 0.2.0 is updated for the current Codex Desktop 0.151.x local data layout. It reads modern rollout messages and sidebar state, preserves spawned thread descendants, and adapts imports to both older and newer `threads` database schemas.
+
+After upgrading Codex Desktop, fully exit Codex before scanning, importing, synchronizing, or deleting conversations, then use **Refresh** in Codex Manager.
+
 ## Platforms
 
 - Windows: WPF application and installer

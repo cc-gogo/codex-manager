@@ -60,7 +60,7 @@ public sealed class ConversationImportService(CodexPaths paths, string backupRoo
                 importedFiles.Add(target);
             }
 
-            await InsertStateRowsAsync(request.Preview.Candidates, importedFiles, request.ProviderMode, cancellationToken).ConfigureAwait(false);
+            await InsertStateRowsAsync(request.Preview.Candidates, importedFiles, request.ProviderMode, projectId, cancellationToken).ConfigureAwait(false);
             await UpdateGlobalStateAsync(request.Preview.Candidates, projectId, request.Destination, cancellationToken).ConfigureAwait(false);
             await ValidateAsync(request.Preview.Candidates, importedFiles, projectId, cancellationToken).ConfigureAwait(false);
             return new ConversationImportResult(importedFiles, backup.Root, importedFiles.Count);
@@ -215,6 +215,7 @@ public sealed class ConversationImportService(CodexPaths paths, string backupRoo
         IReadOnlyList<ConversationImportCandidate> candidates,
         IReadOnlyList<string> importedFiles,
         ImportProviderMode providerMode,
+        string? projectId,
         CancellationToken cancellationToken)
     {
         if (!File.Exists(paths.StateDatabase)) throw new InvalidOperationException("Codex state_5.sqlite 不存在。");
@@ -225,7 +226,7 @@ public sealed class ConversationImportService(CodexPaths paths, string backupRoo
         {
             var candidate = candidates[index];
             var provider = providerMode == ImportProviderMode.CurrentLogin ? candidate.TargetProvider : candidate.SourceProvider;
-            await InsertThreadAsync(connection, transaction, candidate, importedFiles[index], provider, cancellationToken).ConfigureAwait(false);
+            await InsertThreadAsync(connection, transaction, candidate, importedFiles[index], provider, projectId, cancellationToken).ConfigureAwait(false);
         }
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
 
@@ -234,38 +235,39 @@ public sealed class ConversationImportService(CodexPaths paths, string backupRoo
     }
 
     private static async Task InsertThreadAsync(SqliteConnection connection, SqliteTransaction transaction,
-        ConversationImportCandidate candidate, string rolloutPath, string provider, CancellationToken cancellationToken)
+        ConversationImportCandidate candidate, string rolloutPath, string provider, string? projectId, CancellationToken cancellationToken)
+    {
+        var columns = await ReadColumnsAsync(connection, transaction, "threads", cancellationToken).ConfigureAwait(false);
+        var values = new Dictionary<string, (string Parameter, object? Value)>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["id"] = ("$id", candidate.TargetId), ["rollout_path"] = ("$rollout", rolloutPath),
+            ["created_at"] = ("$created", candidate.CreatedAt.ToUnixTimeSeconds()), ["updated_at"] = ("$updated", candidate.UpdatedAt.ToUnixTimeSeconds()),
+            ["source"] = ("$source", "cli"), ["model_provider"] = ("$provider", provider), ["cwd"] = ("$cwd", candidate.Cwd),
+            ["title"] = ("$title", candidate.Title), ["sandbox_policy"] = ("$sandbox", "workspace-write"), ["approval_mode"] = ("$approval", "on-request"),
+            ["tokens_used"] = ("$tokens", 0), ["has_user_event"] = ("$has_user", 1), ["archived"] = ("$archived", 0),
+            ["preview"] = ("$preview", candidate.Title), ["recency_at"] = ("$recency", candidate.UpdatedAt.ToUnixTimeSeconds()),
+            ["created_at_ms"] = ("$created_ms", candidate.CreatedAt.ToUnixTimeMilliseconds()), ["updated_at_ms"] = ("$updated_ms", candidate.UpdatedAt.ToUnixTimeMilliseconds()),
+            ["recency_at_ms"] = ("$recency_ms", candidate.UpdatedAt.ToUnixTimeMilliseconds()), ["thread_source"] = ("$thread_source", "user"), ["name"] = ("$name", candidate.Title),
+            ["history_mode"] = ("$history_mode", "legacy"), ["project_id"] = ("$project_id", projectId), ["thread_section_id"] = ("$section", null), ["is_pinned"] = ("$pinned", 0)
+        };
+        var selected = values.Where(pair => columns.Contains(pair.Key)).ToList();
+        if (!columns.Contains("id")) throw new InvalidOperationException("Codex threads 表缺少 id 列。");
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = $"INSERT INTO threads ({string.Join(", ", selected.Select(pair => pair.Key))}) VALUES ({string.Join(", ", selected.Select(pair => pair.Value.Parameter))})";
+        foreach (var pair in selected) command.Parameters.AddWithValue(pair.Value.Parameter, pair.Value.Value ?? DBNull.Value);
+        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task<HashSet<string>> ReadColumnsAsync(SqliteConnection connection, SqliteTransaction transaction, string table, CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = """
-            INSERT INTO threads
-            (id, rollout_path, created_at, updated_at, source, model_provider, cwd, title,
-             sandbox_policy, approval_mode, tokens_used, has_user_event, archived, preview,
-             recency_at, created_at_ms, updated_at_ms, recency_at_ms, thread_source, name)
-            VALUES ($id, $rollout, $created, $updated, $source, $provider, $cwd, $title,
-                    $sandbox, $approval, 0, 1, 0, $preview, $recency,
-                    $created_ms, $updated_ms, $recency_ms, 'user', $name)
-            """;
-        var created = candidate.CreatedAt.ToUnixTimeSeconds();
-        var updated = candidate.UpdatedAt.ToUnixTimeSeconds();
-        command.Parameters.AddWithValue("$id", candidate.TargetId);
-        command.Parameters.AddWithValue("$rollout", rolloutPath);
-        command.Parameters.AddWithValue("$created", created);
-        command.Parameters.AddWithValue("$updated", updated);
-        command.Parameters.AddWithValue("$source", "cli");
-        command.Parameters.AddWithValue("$provider", provider);
-        command.Parameters.AddWithValue("$cwd", candidate.Cwd);
-        command.Parameters.AddWithValue("$title", candidate.Title);
-        command.Parameters.AddWithValue("$sandbox", "workspace-write");
-        command.Parameters.AddWithValue("$approval", "on-request");
-        command.Parameters.AddWithValue("$preview", candidate.Title);
-        command.Parameters.AddWithValue("$recency", updated);
-        command.Parameters.AddWithValue("$created_ms", candidate.CreatedAt.ToUnixTimeMilliseconds());
-        command.Parameters.AddWithValue("$updated_ms", candidate.UpdatedAt.ToUnixTimeMilliseconds());
-        command.Parameters.AddWithValue("$recency_ms", candidate.UpdatedAt.ToUnixTimeMilliseconds());
-        command.Parameters.AddWithValue("$name", candidate.Title);
-        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        command.CommandText = $"PRAGMA table_info({table})";
+        var columns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) columns.Add(reader.GetString(1));
+        return columns;
     }
 
     private async Task InsertCatalogRowsAsync(IReadOnlyList<ConversationImportCandidate> candidates,
