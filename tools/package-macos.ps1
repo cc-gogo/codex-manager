@@ -2,7 +2,7 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 $dotnet = Join-Path $root 'build-tools\dotnet\dotnet.exe'
 $project = Join-Path $root 'src\CodexConversationManager.Mac\CodexConversationManager.Mac.csproj'
-$version = '0.2.7'
+$version = '0.2.8'
 if (-not (Test-Path -LiteralPath $dotnet)) { throw "Bundled .NET SDK not found: $dotnet" }
 
 foreach ($rid in @('osx-arm64', 'osx-x64')) {
@@ -16,6 +16,8 @@ foreach ($rid in @('osx-arm64', 'osx-x64')) {
     New-Item -ItemType Directory -Path $macos, $resources -Force | Out-Null
     $staging = Join-Path $root "build-cache\macos-$name"
     if (Test-Path -LiteralPath $staging) { Remove-Item -LiteralPath $staging -Recurse -Force }
+    & $dotnet restore $project -r $rid --force-evaluate
+    if ($LASTEXITCODE -ne 0) { throw "macOS restore failed for $rid." }
     & $dotnet publish $project -c Release -r $rid --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o $staging --no-restore
     if ($LASTEXITCODE -ne 0) { throw "macOS publish failed for $rid." }
     $binary = Join-Path $macos 'CodexConversationManager.Mac'
