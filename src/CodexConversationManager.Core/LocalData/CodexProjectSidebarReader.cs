@@ -5,9 +5,6 @@ namespace CodexConversationManager.Core.LocalData;
 
 public sealed class CodexProjectSidebarReader(string path, string? stateDatabasePath = null) : ICodexProjectSidebarProvider
 {
-    // Codex currently renders seven conversations in its Recent sidebar section.
-    private const int SidebarRecentWindowSize = 7;
-
     public async Task<CodexProjectSidebarSnapshot> ReadAsync(CancellationToken cancellationToken = default)
     {
         await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read,
@@ -251,7 +248,7 @@ public sealed class CodexProjectSidebarReader(string path, string? stateDatabase
             if (Guid.TryParseExact(id, "D", out _) && !excludedThreadIds.Contains(id)) ids.Add(id);
         }
 
-        return ids.Take(SidebarRecentWindowSize).ToList();
+        return ids;
     }
 
     private static async Task<IReadOnlyList<string>> ReadThreadIdsAsync(
