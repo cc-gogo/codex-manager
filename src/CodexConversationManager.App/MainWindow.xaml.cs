@@ -215,6 +215,20 @@ public partial class MainWindow : Window
 
     private async void ProviderSync_Click(object sender, RoutedEventArgs e)
     {
+        try
+        {
+            await ProviderSyncCoreAsync();
+        }
+        catch (Exception exception)
+        {
+            MessageBox.Show(this,
+                $"同步窗口发生未处理错误：{exception.Message}",
+                "同步到当前登录模式", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private async Task ProviderSyncCoreAsync()
+    {
         if (_providerSync is null || _processGuard is null) return;
 
         ProcessGuardResult processState;
