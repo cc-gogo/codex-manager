@@ -206,6 +206,14 @@
                 </ScrollViewer>
             </Border>
         </Grid>
-        <Border Grid.Row="2" Background="#EAF2FF" Padding="20,8"><TextBlock Foreground="#285A9B" Text="{loc:Loc Key=Footer}" /></Border>
+        <Border Grid.Row="2" Background="#EAF2FF" Padding="20,8">
+            <DockPanel>
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                    <TextBlock x:Name="VersionStatus" VerticalAlignment="Center" Foreground="#285A9B" Margin="0,0,10,0" />
+                    <Button Padding="10,4" Click="CheckUpdates_Click" Content="{loc:Loc Key=CheckUpdates}" />
+                </StackPanel>
+                <TextBlock Foreground="#285A9B" Text="{loc:Loc Key=Footer}" />
+            </DockPanel>
+        </Border>
     </Grid>
 </Window>

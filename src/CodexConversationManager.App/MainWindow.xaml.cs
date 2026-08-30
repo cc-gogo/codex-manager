@@ -28,6 +28,7 @@ public partial class MainWindow : Window
     private bool _languageReady;
     private string? _autoBackupRoot;
     private bool _autoBackupBusy;
+    private readonly UpdateCheckService _updateCheckService = new();
 
     public MainWindow(
         MainViewModel viewModel,
@@ -48,6 +49,7 @@ public partial class MainWindow : Window
         Loaded += async (_, _) =>
         {
             await _viewModel.RefreshAsync();
+            VersionStatus.Text = $"{LanguageManager.Instance.Get("VersionStatus")} {typeof(MainWindow).Assembly.GetName().Version?.ToString(3)}";
             await RestoreAutoBackupAsync();
         };
         Closed += (_, _) => _autoBackupTimer.Stop();
@@ -63,6 +65,8 @@ public partial class MainWindow : Window
         LanguageManager.Instance.CurrentLanguage = language;
         _settings = _settings with { Language = language.ToString() };
         await _settingsService.SaveAsync(_settings);
+        if (VersionStatus is not null)
+            VersionStatus.Text = $"{LanguageManager.Instance.Get("VersionStatus")} {typeof(MainWindow).Assembly.GetName().Version?.ToString(3)}";
     }
 
     private async void ManualBackup_Click(object sender, RoutedEventArgs e)
@@ -220,8 +224,31 @@ public partial class MainWindow : Window
             MessageBoxImage.Warning);
         if (confirmation != MessageBoxResult.OK) return;
 
-        var dialog = new ProviderSyncDialog(new ProviderSyncViewModel(_providerSync, _processGuard, _ownedPids)) { Owner = this };
-        if (dialog.ShowDialog() == true) await _viewModel.RefreshAsync();
+        var defaultBackup = _settings.ProviderSyncBackupRoot ?? Path.Combine(AppContext.BaseDirectory, "backups", "provider-sync");
+        var syncViewModel = new ProviderSyncViewModel(_providerSync, _processGuard, _ownedPids, defaultBackup);
+        var dialog = new ProviderSyncDialog(syncViewModel) { Owner = this };
+        if (dialog.ShowDialog() == true)
+        {
+            _settings = _settings with { ProviderSyncBackupRoot = syncViewModel.BackupRoot };
+            await _settingsService.SaveAsync(_settings);
+            await _viewModel.RefreshAsync();
+        }
+    }
+
+    private async void CheckUpdates_Click(object sender, RoutedEventArgs e)
+    {
+        VersionStatus.Text = LanguageManager.Instance.Get("CheckingUpdates");
+        try
+        {
+            var result = await _updateCheckService.CheckAsync();
+            var english = LanguageManager.Instance.CurrentLanguage == AppLanguage.English;
+            VersionStatus.Text = result.IsUpdateAvailable
+                ? $"{LanguageManager.Instance.Get("LatestVersion")}: {result.LatestVersion}"
+                : $"{LanguageManager.Instance.Get("VersionStatus")} {result.CurrentVersion} ({LanguageManager.Instance.Get("UpToDate")})";
+            if (result.IsUpdateAvailable && MessageBox.Show(this, english ? $"Version {result.LatestVersion} is available. Open the download page?" : $"发现新版本 {result.LatestVersion}，是否打开下载页面？", "Codex Manager", MessageBoxButton.YesNo, MessageBoxImage.Information) == MessageBoxResult.Yes)
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(result.ReleaseUrl) { UseShellExecute = true });
+        }
+        catch (Exception ex) { VersionStatus.Text = $"{LanguageManager.Instance.Get("UpdateFailed")}: {ex.Message}"; }
     }
 
     private async void ImportConversation_Click(object sender, RoutedEventArgs e)

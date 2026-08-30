@@ -8,7 +8,8 @@ public sealed record AppSettings(
     string? AutoBackupRoot = null,
     bool AutoBackupEnabled = false,
     int AutoBackupIntervalMinutes = 30,
-    string Language = "Chinese");
+    string Language = "Chinese",
+    string? ProviderSyncBackupRoot = null);
 
 public sealed class SettingsService(PortablePathService paths)
 {

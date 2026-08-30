@@ -44,6 +44,14 @@ public sealed class LanguageManager : INotifyPropertyChanged
             ["Language"] = ("语言", "Language"),
             ["Chinese"] = ("中文", "Chinese"),
             ["English"] = ("English", "English")
+            , ["CheckUpdates"] = ("检查更新", "Check for Updates")
+            , ["VersionStatus"] = ("当前版本", "Current version")
+            , ["SyncBackupFolder"] = ("同步备份目录", "Sync backup folder")
+            , ["ChooseFolder"] = ("选择目录", "Choose Folder")
+            , ["CheckingUpdates"] = ("正在检查...", "Checking...")
+            , ["LatestVersion"] = ("有新版本", "New version available")
+            , ["UpToDate"] = ("已是最新", "Up to date")
+            , ["UpdateFailed"] = ("检查失败", "Check failed")
             , ["ImportTitle"] = ("导入 Codex 对话", "Import Codex Conversations")
             , ["ImportDescription"] = ("导入外部 Codex JSONL。执行时必须完全退出 Codex；成功后请重启 Codex。导入前会自动备份。", "Import external Codex JSONL. Completely exit Codex before importing; restart Codex after success. A backup is created first.")
             , ["ChooseJsonl"] = ("选择 JSONL 文件", "Choose JSONL Files")

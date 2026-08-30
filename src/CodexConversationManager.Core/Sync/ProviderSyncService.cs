@@ -39,14 +39,15 @@ public sealed class ProviderSyncService(CodexPaths paths, string configPath, str
         return new ProviderSyncPlan(SourceProvider, destination, targets);
     }
 
-    public async Task<ProviderSyncResult> ApplyAsync(ProviderSyncPlan plan, CancellationToken cancellationToken = default)
+    public async Task<ProviderSyncResult> ApplyAsync(ProviderSyncPlan plan, string? selectedBackupRoot = null, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(plan.DestinationProvider) || plan.TotalCount == 0)
         {
             return new ProviderSyncResult(plan, string.Empty, 0);
         }
 
-        var backup = Path.Combine(backupRoot, DateTime.Now.ToString("yyyyMMdd-HHmmss-fff"));
+        var root = string.IsNullOrWhiteSpace(selectedBackupRoot) ? backupRoot : Path.GetFullPath(selectedBackupRoot);
+        var backup = Path.Combine(root, DateTime.Now.ToString("yyyyMMdd-HHmmss-fff"));
         Directory.CreateDirectory(backup);
         var backedUp = new List<(string Original, string Copy)>();
         try

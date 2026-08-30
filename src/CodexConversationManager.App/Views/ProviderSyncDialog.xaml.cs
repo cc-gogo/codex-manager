@@ -15,4 +15,9 @@ public partial class ProviderSyncDialog : Window
     {
         if (await _viewModel.ApplyAsync()) DialogResult = true;
     }
+    private void ChooseBackup_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new Microsoft.Win32.OpenFolderDialog { Title = "选择同步备份目录", Multiselect = false };
+        if (dialog.ShowDialog(this) == true) _viewModel.SetBackupRoot(dialog.FolderName);
+    }
 }
