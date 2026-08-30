@@ -6,7 +6,7 @@
     <TextBlock Margin="0,8,0,4" Text="{loc:Loc Key=SyncBackupFolder}" FontWeight="SemiBold" />
     <DockPanel Margin="0,0,0,16">
       <Button DockPanel.Dock="Right" Margin="8,0,0,0" Padding="12,6" Click="ChooseBackup_Click" Content="{loc:Loc Key=ChooseFolder}" />
-      <TextBox Padding="8" IsReadOnly="True" Text="{Binding BackupRoot}" />
+      <TextBox Padding="8" IsReadOnly="True" Text="{Binding BackupRoot, Mode=OneWay}" />
     </DockPanel>
     <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
       <Button Padding="14,7" Margin="0,0,8,0" IsCancel="True" Content="{loc:Loc Key=Cancel}" />
