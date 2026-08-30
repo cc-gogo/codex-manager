@@ -6,14 +6,14 @@ namespace CodexConversationManager.Core.Sync;
 
 public sealed class ProviderSyncService(CodexPaths paths, string configPath, string backupRoot)
 {
-    private const string SourceProvider = "openai";
+    private const string SourceProviderLabel = "其他 provider";
 
     public async Task<ProviderSyncPlan> PreviewAsync(CancellationToken cancellationToken = default)
     {
         var destination = await ReadConfiguredProviderAsync(cancellationToken).ConfigureAwait(false);
-        if (string.IsNullOrWhiteSpace(destination) || string.Equals(destination, SourceProvider, StringComparison.OrdinalIgnoreCase))
+        if (string.IsNullOrWhiteSpace(destination))
         {
-            return new ProviderSyncPlan(SourceProvider, destination ?? string.Empty, []);
+            return new ProviderSyncPlan(SourceProviderLabel, destination ?? string.Empty, []);
         }
 
         var targets = new List<ProviderSyncTarget>();
@@ -22,7 +22,7 @@ public sealed class ProviderSyncService(CodexPaths paths, string configPath, str
             if (!Directory.Exists(directory)) continue;
             foreach (var file in Directory.EnumerateFiles(directory, "*.jsonl", SearchOption.AllDirectories))
             {
-                var count = await CountRolloutAsync(file, SourceProvider, cancellationToken).ConfigureAwait(false);
+                var count = await CountRolloutAsync(file, destination, cancellationToken).ConfigureAwait(false);
                 if (count > 0)
                 {
                     targets.Add(new ProviderSyncTarget(file, "rollout", count));
@@ -32,11 +32,11 @@ public sealed class ProviderSyncService(CodexPaths paths, string configPath, str
 
         foreach (var database in DatabaseSpecs())
         {
-            var count = await CountAsync(database.Path, database.Table, SourceProvider, cancellationToken).ConfigureAwait(false);
+            var count = await CountAsync(database.Path, database.Table, destination, cancellationToken).ConfigureAwait(false);
             if (count > 0) targets.Add(new ProviderSyncTarget(database.Path, database.Table, count));
         }
 
-        return new ProviderSyncPlan(SourceProvider, destination, targets);
+        return new ProviderSyncPlan(SourceProviderLabel, destination, targets);
     }
 
     public async Task<ProviderSyncResult> ApplyAsync(ProviderSyncPlan plan, string? selectedBackupRoot = null, CancellationToken cancellationToken = default)
@@ -64,13 +64,13 @@ public sealed class ProviderSyncService(CodexPaths paths, string configPath, str
             var updated = 0;
             foreach (var target in plan.Targets.Where(target => target.Kind == "rollout"))
             {
-                updated += await RewriteRolloutAsync(target.Path, plan.SourceProvider, plan.DestinationProvider, cancellationToken).ConfigureAwait(false);
+                updated += await RewriteRolloutAsync(target.Path, plan.DestinationProvider, cancellationToken).ConfigureAwait(false);
             }
 
             foreach (var database in DatabaseSpecs())
             {
                 if (!plan.Targets.Any(target => string.Equals(target.Path, database.Path, StringComparison.OrdinalIgnoreCase))) continue;
-                updated += await UpdateDatabaseAsync(database.Path, database.Table, plan.SourceProvider, plan.DestinationProvider, cancellationToken).ConfigureAwait(false);
+                updated += await UpdateDatabaseAsync(database.Path, database.Table, plan.DestinationProvider, cancellationToken).ConfigureAwait(false);
             }
 
             var remaining = await PreviewAsync(cancellationToken).ConfigureAwait(false);
@@ -98,25 +98,25 @@ public sealed class ProviderSyncService(CodexPaths paths, string configPath, str
         return value.Trim();
     }
 
-    private async Task<int> CountRolloutAsync(string path, string provider, CancellationToken cancellationToken)
+    private static async Task<int> CountRolloutAsync(string path, string destination, CancellationToken cancellationToken)
     {
         var count = 0;
         foreach (var line in await File.ReadAllLinesAsync(path, cancellationToken).ConfigureAwait(false))
         {
             if (JsonNode.Parse(line) is JsonObject value && value["type"]?.GetValue<string>() == "session_meta" &&
-                value["payload"]?["model_provider"]?.GetValue<string>() == provider) count++;
+                !string.Equals(value["payload"]?["model_provider"]?.GetValue<string>(), destination, StringComparison.OrdinalIgnoreCase)) count++;
         }
         return count;
     }
 
-    private async Task<int> RewriteRolloutAsync(string path, string source, string destination, CancellationToken cancellationToken)
+    private static async Task<int> RewriteRolloutAsync(string path, string destination, CancellationToken cancellationToken)
     {
         var lines = await File.ReadAllLinesAsync(path, cancellationToken).ConfigureAwait(false);
         var changed = 0;
         for (var i = 0; i < lines.Length; i++)
         {
             var value = JsonNode.Parse(lines[i]) as JsonObject;
-            if (value?["type"]?.GetValue<string>() != "session_meta" || value["payload"]?["model_provider"]?.GetValue<string>() != source) continue;
+            if (value?["type"]?.GetValue<string>() != "session_meta" || string.Equals(value["payload"]?["model_provider"]?.GetValue<string>(), destination, StringComparison.OrdinalIgnoreCase)) continue;
             value["payload"]!["model_provider"] = destination;
             lines[i] = value.ToJsonString();
             changed++;
@@ -130,19 +130,19 @@ public sealed class ProviderSyncService(CodexPaths paths, string configPath, str
         return changed;
     }
 
-    private static async Task<int> CountAsync(string path, string table, string provider, CancellationToken cancellationToken)
+    private static async Task<int> CountAsync(string path, string table, string destination, CancellationToken cancellationToken)
     {
         if (!File.Exists(path)) return 0;
         await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadOnly, Pooling = false }.ToString());
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
         if (!await HasColumnAsync(connection, table, "model_provider", cancellationToken).ConfigureAwait(false)) return 0;
         await using var command = connection.CreateCommand();
-        command.CommandText = $"SELECT count(*) FROM {table} WHERE model_provider = $provider";
-        command.Parameters.AddWithValue("$provider", provider);
+        command.CommandText = $"SELECT count(*) FROM {table} WHERE model_provider IS NOT NULL AND model_provider <> $destination";
+        command.Parameters.AddWithValue("$destination", destination);
         return Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false));
     }
 
-    private static async Task<int> UpdateDatabaseAsync(string path, string table, string source, string destination, CancellationToken cancellationToken)
+    private static async Task<int> UpdateDatabaseAsync(string path, string table, string destination, CancellationToken cancellationToken)
     {
         await using var connection = new SqliteConnection($"Data Source={path};Pooling=False");
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
@@ -150,8 +150,8 @@ public sealed class ProviderSyncService(CodexPaths paths, string configPath, str
         await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = $"UPDATE {table} SET model_provider = $destination WHERE model_provider = $source";
-        command.Parameters.AddWithValue("$source", source); command.Parameters.AddWithValue("$destination", destination);
+        command.CommandText = $"UPDATE {table} SET model_provider = $destination WHERE model_provider IS NOT NULL AND model_provider <> $destination";
+        command.Parameters.AddWithValue("$destination", destination);
         var count = await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         return count;

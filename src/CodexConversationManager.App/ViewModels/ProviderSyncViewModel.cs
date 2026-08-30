@@ -20,7 +20,7 @@ public sealed class ProviderSyncViewModel(ProviderSyncService service, IDeletion
     public async Task LoadAsync()
     {
         IsBusy = true;
-        try { Plan = await service.PreviewAsync(); Status = Plan.TotalCount == 0 ? $"未发现需要同步的 {Plan.SourceProvider} 对话。" : $"发现 {Plan.TotalCount} 条记录将从 {Plan.SourceProvider} 同步为 {Plan.DestinationProvider}。"; }
+        try { Plan = await service.PreviewAsync(); Status = Plan.TotalCount == 0 ? $"未发现需要同步的对话（目标 provider：{Plan.DestinationProvider}）。" : $"发现 {Plan.TotalCount} 条 provider 不一致的记录，将统一同步为 {Plan.DestinationProvider}。"; }
         catch (Exception ex) { Status = $"读取失败：{ex.Message}"; }
         finally { IsBusy = false; }
     }

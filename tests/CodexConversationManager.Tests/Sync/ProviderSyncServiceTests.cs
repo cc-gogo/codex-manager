@@ -8,7 +8,7 @@ namespace CodexConversationManager.Tests.Sync;
 public sealed class ProviderSyncServiceTests
 {
     [Fact]
-    public async Task PreviewAndApply_UpdateOnlyOpenAiAndBecomeIdempotent()
+    public async Task PreviewAndApply_UpdateEveryProviderMismatchAndBecomeIdempotent()
     {
         var root = Path.Combine(Path.GetTempPath(), "codex-provider-sync-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(Path.Combine(root, "sessions", "2026"));
@@ -21,15 +21,17 @@ public sealed class ProviderSyncServiceTests
         var service = new ProviderSyncService(paths, Path.Combine(root, "config.toml"), Path.Combine(root, "backup"));
 
         var preview = await service.PreviewAsync();
-        Assert.Equal(2, preview.TotalCount);
+        Assert.Equal(4, preview.TotalCount);
         var result = await service.ApplyAsync(preview);
-        Assert.Equal(2, result.UpdatedCount);
+        Assert.Equal(4, result.UpdatedCount);
         Assert.True(Directory.Exists(result.BackupPath));
         var second = await service.PreviewAsync();
         Assert.Equal(0, second.TotalCount);
-        Assert.Contains("custom", await File.ReadAllTextAsync(Path.Combine(root, "sessions", "2026", "rollout.jsonl")));
+        var rollout = await File.ReadAllTextAsync(Path.Combine(root, "sessions", "2026", "rollout.jsonl"));
+        Assert.DoesNotContain("custom", rollout);
+        Assert.Equal(2, rollout.Split("CodexPlusPlus", StringSplitOptions.None).Length - 1);
         Assert.Equal(0, await ReadCountAsync(Path.Combine(root, "state_5.sqlite"), "openai"));
-        Assert.Equal(1, await ReadCountAsync(Path.Combine(root, "state_5.sqlite"), "CodexPlusPlus"));
+        Assert.Equal(2, await ReadCountAsync(Path.Combine(root, "state_5.sqlite"), "CodexPlusPlus"));
         Directory.Delete(root, true);
     }
 
@@ -38,7 +40,7 @@ public sealed class ProviderSyncServiceTests
         await using var connection = new SqliteConnection($"Data Source={path};Pooling=False");
         await connection.OpenAsync();
         await using var command = connection.CreateCommand();
-        command.CommandText = $"CREATE TABLE {table} (id TEXT, model_provider TEXT); INSERT INTO {table} VALUES ('1','openai');";
+        command.CommandText = $"CREATE TABLE {table} (id TEXT, model_provider TEXT); INSERT INTO {table} VALUES ('1','openai'); INSERT INTO {table} VALUES ('2','api-other');";
         await command.ExecuteNonQueryAsync();
     }
 
