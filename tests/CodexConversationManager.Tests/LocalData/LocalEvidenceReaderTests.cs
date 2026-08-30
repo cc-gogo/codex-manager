@@ -606,6 +606,56 @@ public sealed class LocalEvidenceReaderTests
     }
 
     [Fact]
+    public async Task Project_sidebar_reader_preserves_legacy_sidebar_project_identity_when_modern_database_ids_change()
+    {
+        var globalStatePath = Path.GetTempFileName();
+        var statePath = Path.GetTempFileName();
+        try
+        {
+            await File.WriteAllTextAsync(globalStatePath, """
+                {
+                  "local-projects": {
+                    "legacy-daily": { "id": "legacy-daily", "name": "日常对话", "rootPaths": ["D:\\daily"] }
+                  },
+                  "project-order": ["legacy-daily"],
+                  "sidebar-project-thread-orders": {
+                    "legacy-daily": { "threadIds": ["019fd250-d93d-7ef1-9c46-925273ffd37d"] }
+                  }
+                }
+                """);
+            await using (var connection = new SqliteConnection($"Data Source={statePath}"))
+            {
+                await connection.OpenAsync();
+                await using var command = connection.CreateCommand();
+                command.CommandText = """
+                    CREATE TABLE projects (id TEXT, name TEXT);
+                    CREATE TABLE project_roots (project_id TEXT, path TEXT);
+                    CREATE TABLE threads (
+                        id TEXT, archived INTEGER, preview TEXT, recency_at_ms INTEGER,
+                        project_id TEXT, thread_section_id TEXT, is_pinned INTEGER);
+                    INSERT INTO projects VALUES ('modern-daily', '日常对话');
+                    INSERT INTO project_roots VALUES ('modern-daily', 'D:\daily');
+                    INSERT INTO threads VALUES ('019fd250-d93d-7ef1-9c46-925273ffd37d', 0, 'Visible', 100, 'modern-daily', NULL, 0);
+                    """;
+                await command.ExecuteNonQueryAsync();
+            }
+
+            var snapshot = await new CodexProjectSidebarReader(globalStatePath, statePath).ReadAsync();
+
+            var project = Assert.Single(snapshot.Projects);
+            Assert.Equal("legacy-daily", project.Id);
+            Assert.Equal("legacy-daily", snapshot.ThreadProjectIds["019fd250-d93d-7ef1-9c46-925273ffd37d"]);
+            Assert.Equal(["019fd250-d93d-7ef1-9c46-925273ffd37d"], snapshot.SidebarThreadOrders[project.Id]);
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            File.Delete(globalStatePath);
+            File.Delete(statePath);
+        }
+    }
+
+    [Fact]
     public async Task Readers_do_not_modify_any_fixture()
     {
         var before = HashFixtureFiles();

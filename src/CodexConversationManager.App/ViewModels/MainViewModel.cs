@@ -298,13 +298,16 @@ public sealed class MainViewModel(
         var recentThreadIds = prioritizeArchivedRecent
             ? _projectSidebar.ArchivedRecentThreadIds ?? []
             : _projectSidebar.RecentThreadIds ?? [];
+        var rowsById = eligibleRows.ToDictionary(row => row.Id, StringComparer.OrdinalIgnoreCase);
         var projectIdByThread = eligibleRows.ToDictionary(row => row.Id, ResolveProjectId, StringComparer.OrdinalIgnoreCase);
         var assigned = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var project in _projectSidebar.Projects)
         {
-            var projectRows = eligibleRows.Where(row =>
-                projectIdByThread.TryGetValue(row.Id, out var projectId) &&
-                string.Equals(projectId, project.Id, StringComparison.OrdinalIgnoreCase)).ToList();
+            var projectRows = _projectSidebar.SidebarThreadOrders.TryGetValue(project.Id, out var sidebarThreadIds)
+                ? sidebarThreadIds.Where(rowsById.ContainsKey).Select(id => rowsById[id]).ToList()
+                : eligibleRows.Where(row =>
+                    projectIdByThread.TryGetValue(row.Id, out var projectId) &&
+                    string.Equals(projectId, project.Id, StringComparison.OrdinalIgnoreCase)).ToList();
             if (projectRows.Count > 0)
             {
                 var projectNode = new ConversationTreeNodeViewModel(project.Name, null,
@@ -321,7 +324,6 @@ public sealed class MainViewModel(
             }
         }
 
-        var rowsById = eligibleRows.ToDictionary(row => row.Id, StringComparer.OrdinalIgnoreCase);
         var pinnedRows = _projectSidebar.PinnedThreadIds
             .Where(id => !assigned.Contains(id))
             .Where(rowsById.ContainsKey)
@@ -447,12 +449,6 @@ public sealed class MainViewModel(
 
     private string? ResolveProjectId(ConversationRowViewModel row)
     {
-        if (_projectSidebar.ThreadProjectIds.TryGetValue(row.Id, out var id) &&
-            _projectSidebar.Projects.Any(project => string.Equals(project.Id, id, StringComparison.OrdinalIgnoreCase)))
-        {
-            return id;
-        }
-
         var sidebarProjectId = _projectSidebar.SidebarThreadOrders
             .Where(pair => pair.Value.Contains(row.Id, StringComparer.OrdinalIgnoreCase))
             .Select(pair => _projectSidebar.Projects.FirstOrDefault(project =>
@@ -465,6 +461,12 @@ public sealed class MainViewModel(
         if (sidebarProjectId is not null)
         {
             return sidebarProjectId;
+        }
+
+        if (_projectSidebar.ThreadProjectIds.TryGetValue(row.Id, out var id) &&
+            _projectSidebar.Projects.Any(project => string.Equals(project.Id, id, StringComparison.OrdinalIgnoreCase)))
+        {
+            return id;
         }
 
         return _projectSidebar.Projects

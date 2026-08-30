@@ -99,6 +99,33 @@ public sealed class MainViewModelTests
     }
 
     [Fact]
+    public async Task Project_tree_uses_the_exact_codex_sidebar_order_instead_of_record_order()
+    {
+        var first = Record("first", "First", ConversationCategory.Residual, "D:\\daily");
+        var second = Record("second", "Second", ConversationCategory.Residual, "D:\\daily");
+        var third = Record("third", "Third", ConversationCategory.Residual, "D:\\daily");
+        var sidebar = new FakeSidebar(new CodexProjectSidebarSnapshot(
+        [
+            new CodexProject("daily", "日常对话", ["D:\\daily"], 1)
+        ],
+        new Dictionary<string, string>(),
+        new Dictionary<string, IReadOnlyList<string>>
+        {
+            ["daily"] = [first.Id, second.Id, third.Id]
+        },
+        [], []));
+        var viewModel = new MainViewModel(
+            new FakeInventory([third, second, first]), new SafeGuard(), projectSidebar: sidebar);
+
+        await viewModel.RefreshAsync();
+
+        var daily = Assert.Single(viewModel.ProjectTree, node => node.Name == "日常对话");
+        Assert.Equal(
+            [first.Id, second.Id, third.Id],
+            daily.Children.Select(node => node.Conversation!.Id).ToArray());
+    }
+
+    [Fact]
     public async Task Owned_app_server_pid_is_passed_to_the_deletion_guard()
     {
         var guard = new RecordingGuard();

@@ -1,6 +1,6 @@
 ; Inno Setup installer for Codex Conversation Manager.
 #define MyAppName "Codex Manager"
-#define MyAppVersion "0.2.5"
+#define MyAppVersion "0.2.6"
 #define MyAppPublisher "Codex Conversation Manager"
 #define MyAppExeName "CodexConversationManager.App.exe"
 
@@ -13,9 +13,10 @@ DefaultDirName={autopf}\CodexConversationManager
 DefaultGroupName={#MyAppName}
 OutputDir=..\installer-output
 OutputBaseFilename=CodexConversationManager-Setup
-; Keep each file independently compressed. This avoids a failed solid LZMA2
-; stream preventing the bundled .NET runtime from being extracted.
-Compression=lzma
+; The bundled self-contained runtime contains hundreds of files. Inno Setup's
+; LZMA worker has crashed while compressing this payload on this build machine,
+; so use ZIP for a reliable, independently compressed installer.
+Compression=zip
 SolidCompression=no
 WizardStyle=modern
 ArchitecturesInstallIn64BitMode=x64compatible

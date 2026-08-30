@@ -70,9 +70,10 @@ public sealed class CodexProjectSidebarReader(string path, string? stateDatabase
             .ToList();
         var modern = await ReadModernSidebarAsync(sidebarOrders,
             projectlessThreadIdNodes is null ? null : projectlessThreadIds, cancellationToken).ConfigureAwait(false);
+        var modernProjectIdMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         if (modern.Projects.Count > 0)
         {
-            projects = modern.Projects;
+            (projects, modernProjectIdMap) = MergeModernProjects(projects, modern.Projects, sidebarOrders);
         }
 
         if (modern.ThreadProjectIds is not null)
@@ -84,7 +85,7 @@ public sealed class CodexProjectSidebarReader(string path, string? stateDatabase
 
             foreach (var (threadId, projectId) in modern.ThreadProjectIds)
             {
-                assignments[threadId] = projectId;
+                assignments[threadId] = modernProjectIdMap.GetValueOrDefault(projectId, projectId);
             }
         }
 
@@ -101,6 +102,49 @@ public sealed class CodexProjectSidebarReader(string path, string? stateDatabase
             ThreadSections = modern.ThreadSections
         };
     }
+
+    private static (List<CodexProject> Projects, Dictionary<string, string> ModernProjectIdMap) MergeModernProjects(
+        IReadOnlyList<CodexProject> legacyProjects,
+        IReadOnlyList<CodexProject> modernProjects,
+        IReadOnlyDictionary<string, IReadOnlyList<string>> sidebarOrders)
+    {
+        var modernProjectIdMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var remainingLegacy = legacyProjects.ToDictionary(project => project.Id, StringComparer.OrdinalIgnoreCase);
+        var merged = new List<CodexProject>();
+
+        foreach (var modern in modernProjects)
+        {
+            var legacy = remainingLegacy.Values.FirstOrDefault(candidate => IsSameProject(candidate, modern));
+            if (legacy is null)
+            {
+                merged.Add(modern);
+                continue;
+            }
+
+            // The global state contains the IDs used by Codex's sidebar order. Keep that ID
+            // even after a newer SQLite schema assigns the same project a different ID.
+            modernProjectIdMap[modern.Id] = legacy.Id;
+            merged.Add(new CodexProject(legacy.Id, modern.Name, modern.RootPaths, modern.Order));
+            remainingLegacy.Remove(legacy.Id);
+        }
+
+        foreach (var legacy in remainingLegacy.Values)
+        {
+            if (sidebarOrders.ContainsKey(legacy.Id))
+            {
+                merged.Add(legacy);
+            }
+        }
+
+        return (merged, modernProjectIdMap);
+    }
+
+    private static bool IsSameProject(CodexProject legacy, CodexProject modern) =>
+        string.Equals(legacy.Name, modern.Name, StringComparison.OrdinalIgnoreCase) &&
+        legacy.RootPaths.Any(legacyRoot => modern.RootPaths.Any(modernRoot =>
+            string.Equals(NormalizePath(legacyRoot), NormalizePath(modernRoot), StringComparison.OrdinalIgnoreCase)));
+
+    private static string NormalizePath(string path) => path.Trim().Replace('/', '\\').TrimEnd('\\');
 
     private async Task<ModernSidebarState> ReadModernSidebarAsync(
         IReadOnlyDictionary<string, IReadOnlyList<string>> sidebarOrders,
