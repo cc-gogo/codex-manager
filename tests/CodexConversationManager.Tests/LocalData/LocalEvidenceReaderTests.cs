@@ -221,6 +221,69 @@ public sealed class LocalEvidenceReaderTests
     }
 
     [Fact]
+    public async Task Project_sidebar_reader_uses_the_explicit_recent_index_and_ignores_stale_or_unindexed_threads()
+    {
+        var globalStatePath = Path.GetTempFileName();
+        var statePath = Path.GetTempFileName();
+        try
+        {
+            await File.WriteAllTextAsync(globalStatePath, """
+                {
+                  "projectless-thread-ids": [
+                    "00000000-0000-7000-8000-000000000001",
+                    "00000000-0000-7000-8000-000000000002",
+                    "00000000-0000-7000-8000-000000000003",
+                    "00000000-0000-7000-8000-000000000004",
+                    "00000000-0000-7000-8000-000000000005",
+                    "00000000-0000-7000-8000-000000000006",
+                    "00000000-0000-7000-8000-000000000007",
+                    "00000000-0000-7000-8000-000000000008",
+                    "00000000-0000-7000-8000-000000000009",
+                    "00000000-0000-7000-8000-000000000010"
+                  ]
+                }
+                """);
+            await using (var connection = new SqliteConnection($"Data Source={statePath}"))
+            {
+                await connection.OpenAsync();
+                await using var command = connection.CreateCommand();
+                command.CommandText = """
+                    CREATE TABLE threads (id TEXT, archived INTEGER, preview TEXT, recency_at_ms INTEGER);
+                    INSERT INTO threads VALUES ('00000000-0000-7000-8000-000000000001', 0, 'one', 100);
+                    INSERT INTO threads VALUES ('00000000-0000-7000-8000-000000000002', 0, 'two', 200);
+                    INSERT INTO threads VALUES ('00000000-0000-7000-8000-000000000003', 0, 'three', 300);
+                    INSERT INTO threads VALUES ('00000000-0000-7000-8000-000000000004', 0, 'four', 400);
+                    INSERT INTO threads VALUES ('00000000-0000-7000-8000-000000000005', 0, 'five', 500);
+                    INSERT INTO threads VALUES ('00000000-0000-7000-8000-000000000006', 0, 'six', 600);
+                    INSERT INTO threads VALUES ('00000000-0000-7000-8000-000000000007', 0, 'seven', 700);
+                    INSERT INTO threads VALUES ('00000000-0000-7000-8000-000000000011', 0, 'not in Codex recent', 900);
+                    """;
+                await command.ExecuteNonQueryAsync();
+            }
+
+            var snapshot = await new CodexProjectSidebarReader(globalStatePath, statePath).ReadAsync();
+
+            Assert.Equal(
+                [
+                    "00000000-0000-7000-8000-000000000001",
+                    "00000000-0000-7000-8000-000000000002",
+                    "00000000-0000-7000-8000-000000000003",
+                    "00000000-0000-7000-8000-000000000004",
+                    "00000000-0000-7000-8000-000000000005",
+                    "00000000-0000-7000-8000-000000000006",
+                    "00000000-0000-7000-8000-000000000007"
+                ],
+                snapshot.RecentThreadIds);
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            File.Delete(globalStatePath);
+            File.Delete(statePath);
+        }
+    }
+
+    [Fact]
     public async Task Project_sidebar_reader_keeps_every_recent_thread_without_a_fixed_window()
     {
         var globalStatePath = Path.GetTempFileName();
@@ -303,7 +366,7 @@ public sealed class LocalEvidenceReaderTests
     }
 
     [Fact]
-    public async Task Project_sidebar_reader_does_not_drop_unarchived_threads_missing_from_projectless_list()
+    public async Task Project_sidebar_reader_does_not_add_unindexed_threads_to_recent()
     {
         var globalStatePath = Path.GetTempFileName();
         var statePath = Path.GetTempFileName();
@@ -329,8 +392,6 @@ public sealed class LocalEvidenceReaderTests
 
             Assert.Equal(
                 [
-                    "019fd250-d93d-7ef1-9c46-925273ffd37d",
-                    "019fd251-d93d-7ef1-9c46-925273ffd37d",
                     "019fd252-d93d-7ef1-9c46-925273ffd37d"
                 ],
                 snapshot.RecentThreadIds);
@@ -344,7 +405,7 @@ public sealed class LocalEvidenceReaderTests
     }
 
     [Fact]
-    public async Task Project_sidebar_reader_preserves_the_explicit_codex_recent_list_without_state_filtering()
+    public async Task Project_sidebar_reader_excludes_threads_not_in_the_explicit_codex_recent_list()
     {
         var globalStatePath = Path.GetTempFileName();
         var statePath = Path.GetTempFileName();
@@ -384,14 +445,12 @@ public sealed class LocalEvidenceReaderTests
 
             Assert.Equal(
                 [
-                    "88888888-8888-7888-8888-888888888888",
                     "11111111-1111-7111-8111-111111111111",
                     "22222222-2222-7222-8222-222222222222",
                     "33333333-3333-7333-8333-333333333333",
                     "44444444-4444-7444-8444-444444444444",
                     "55555555-5555-7555-8555-555555555555",
-                    "66666666-6666-7666-8666-666666666666",
-                    "77777777-7777-7777-8777-777777777777"
+                    "66666666-6666-7666-8666-666666666666"
                 ],
                 snapshot.RecentThreadIds);
         }

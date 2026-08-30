@@ -62,12 +62,14 @@ public sealed class CodexProjectSidebarReader(string path, string? stateDatabase
             }
         }
 
-        var projectlessThreadIds = (root["projectless-thread-ids"] as JsonArray ?? [])
+        var projectlessThreadIdNodes = root["projectless-thread-ids"] as JsonArray;
+        var projectlessThreadIds = (projectlessThreadIdNodes ?? [])
             .Select(Value)
             .Where(id => id is not null && Guid.TryParseExact(id, "D", out _))
             .Cast<string>()
             .ToList();
-        var modern = await ReadModernSidebarAsync(sidebarOrders, cancellationToken).ConfigureAwait(false);
+        var modern = await ReadModernSidebarAsync(sidebarOrders,
+            projectlessThreadIdNodes is null ? null : projectlessThreadIds, cancellationToken).ConfigureAwait(false);
         if (modern.Projects.Count > 0)
         {
             projects = modern.Projects;
@@ -102,6 +104,7 @@ public sealed class CodexProjectSidebarReader(string path, string? stateDatabase
 
     private async Task<ModernSidebarState> ReadModernSidebarAsync(
         IReadOnlyDictionary<string, IReadOnlyList<string>> sidebarOrders,
+        IReadOnlyList<string>? explicitRecentThreadIds,
         CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(stateDatabasePath) || !File.Exists(stateDatabasePath))
@@ -132,8 +135,10 @@ public sealed class CodexProjectSidebarReader(string path, string? stateDatabase
 
         var projectSidebarThreadIds = sidebarOrders.Values.SelectMany(ids => ids)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var recentThreadIds = await ReadRecentThreadIdsAsync(connection, columns, false, projectSidebarThreadIds, cancellationToken).ConfigureAwait(false);
-        var archivedRecentThreadIds = await ReadRecentThreadIdsAsync(connection, columns, true, projectSidebarThreadIds, cancellationToken).ConfigureAwait(false);
+        var recentThreadIds = await ReadRecentThreadIdsAsync(connection, columns, false, projectSidebarThreadIds,
+            explicitRecentThreadIds, cancellationToken).ConfigureAwait(false);
+        var archivedRecentThreadIds = await ReadRecentThreadIdsAsync(connection, columns, true, projectSidebarThreadIds,
+            null, cancellationToken).ConfigureAwait(false);
         var pinnedThreadIds = columns.Contains("is_pinned")
             ? await ReadThreadIdsAsync(connection, "COALESCE(is_pinned, 0) <> 0", cancellationToken).ConfigureAwait(false)
             : [];
@@ -216,6 +221,7 @@ public sealed class CodexProjectSidebarReader(string path, string? stateDatabase
         IReadOnlySet<string> columns,
         bool archived,
         IReadOnlySet<string> excludedThreadIds,
+        IReadOnlyList<string>? explicitRecentThreadIds,
         CancellationToken cancellationToken)
     {
         var recencyExpression = columns.Contains("recency_at_ms")
@@ -248,7 +254,13 @@ public sealed class CodexProjectSidebarReader(string path, string? stateDatabase
             if (Guid.TryParseExact(id, "D", out _) && !excludedThreadIds.Contains(id)) ids.Add(id);
         }
 
-        return ids;
+        if (explicitRecentThreadIds is null)
+        {
+            return ids;
+        }
+
+        var visibleIds = ids.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return explicitRecentThreadIds.Where(visibleIds.Contains).ToList();
     }
 
     private static async Task<IReadOnlyList<string>> ReadThreadIdsAsync(
