@@ -217,8 +217,30 @@ public partial class MainWindow : Window
     {
         if (_providerSync is null || _processGuard is null) return;
 
+        ProcessGuardResult processState;
+        try
+        {
+            processState = await _processGuard.CheckAsync(_ownedPids);
+        }
+        catch (Exception exception)
+        {
+            MessageBox.Show(this,
+                $"无法检查 Codex 是否已退出：{exception.Message}\n\n请手动确认 Codex / ChatGPT 已完全退出后再重试。",
+                "同步到当前登录模式", MessageBoxButton.OK, MessageBoxImage.Error);
+            return;
+        }
+
+        if (!processState.IsSafe)
+        {
+            var names = string.Join(", ", processState.BlockingProcesses.Select(process => $"{process.ProcessName} ({process.ProcessId})"));
+            MessageBox.Show(this,
+                $"检测到 Codex / ChatGPT 仍在运行：\n{names}\n\n请先完全退出后，再点击同步。",
+                "同步到当前登录模式", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
         var confirmation = MessageBox.Show(this,
-            "此功能用于同步 API 登录和账号登录的本地对话。\n\n执行同步前，必须完全退出 Codex / ChatGPT，否则无法安全修改本地对话索引。请确认已经完全退出后继续。",
+            "已确认 Codex / ChatGPT 未运行。此功能用于同步 API 登录和账号登录的本地对话。\n\n执行同步前，必须完全退出 Codex / ChatGPT；请保持其关闭。点击确定后继续读取同步计划。",
             "同步到当前登录模式",
             MessageBoxButton.OKCancel,
             MessageBoxImage.Warning);
