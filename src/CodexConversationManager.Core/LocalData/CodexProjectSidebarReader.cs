@@ -5,6 +5,9 @@ namespace CodexConversationManager.Core.LocalData;
 
 public sealed class CodexProjectSidebarReader(string path, string? stateDatabasePath = null) : ICodexProjectSidebarProvider
 {
+    // Codex currently renders six projectless conversations in its Recent sidebar section.
+    private const int SidebarRecentWindowSize = 6;
+
     public async Task<CodexProjectSidebarSnapshot> ReadAsync(CancellationToken cancellationToken = default)
     {
         await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read,
@@ -221,12 +224,19 @@ public sealed class CodexProjectSidebarReader(string path, string? stateDatabase
                 ? "COALESCE(recency_at * 1000, 0)"
                 : "0";
         var previewFilter = columns.Contains("preview") ? "AND COALESCE(preview, '') <> ''" : string.Empty;
+        var projectFilter = columns.Contains("project_id") ? "AND project_id IS NULL" : string.Empty;
+        var sectionFilter = columns.Contains("thread_section_id") ? "AND thread_section_id IS NULL" : string.Empty;
+        var pinnedFilter = columns.Contains("is_pinned") ? "AND COALESCE(is_pinned, 0) = 0" : string.Empty;
         var sql = $"""
             SELECT id
             FROM threads
             WHERE archived = $archived
               {previewFilter}
+              {projectFilter}
+              {sectionFilter}
+              {pinnedFilter}
             ORDER BY {recencyExpression} DESC, id
+            LIMIT {SidebarRecentWindowSize}
             """;
         var ids = new List<string>();
         await using var command = connection.CreateCommand();

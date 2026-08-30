@@ -221,6 +221,86 @@ public sealed class LocalEvidenceReaderTests
     }
 
     [Fact]
+    public async Task Project_sidebar_reader_limits_modern_recent_threads_to_codex_sidebar_window()
+    {
+        var globalStatePath = Path.GetTempFileName();
+        var statePath = Path.GetTempFileName();
+        try
+        {
+            await File.WriteAllTextAsync(globalStatePath, "{}");
+            await using (var connection = new SqliteConnection($"Data Source={statePath}"))
+            {
+                await connection.OpenAsync();
+                await using var command = connection.CreateCommand();
+                command.CommandText = """
+                    CREATE TABLE threads (id TEXT, archived INTEGER, preview TEXT, recency_at_ms INTEGER);
+                    INSERT INTO threads VALUES ('00000000-0000-7000-8000-000000000001', 0, 'oldest', 1000);
+                    INSERT INTO threads VALUES ('00000000-0000-7000-8000-000000000002', 0, 'older', 2000);
+                    INSERT INTO threads VALUES ('00000000-0000-7000-8000-000000000003', 0, 'fourth', 3000);
+                    INSERT INTO threads VALUES ('00000000-0000-7000-8000-000000000004', 0, 'third', 4000);
+                    INSERT INTO threads VALUES ('00000000-0000-7000-8000-000000000005', 0, 'second', 5000);
+                    INSERT INTO threads VALUES ('00000000-0000-7000-8000-000000000006', 0, 'newest', 6000);
+                    INSERT INTO threads VALUES ('00000000-0000-7000-8000-000000000007', 0, 'residual', 7000);
+                    """;
+                await command.ExecuteNonQueryAsync();
+            }
+
+            var snapshot = await new CodexProjectSidebarReader(globalStatePath, statePath).ReadAsync();
+
+            Assert.Equal(6, snapshot.RecentThreadIds!.Count);
+            Assert.DoesNotContain("00000000-0000-7000-8000-000000000001", snapshot.RecentThreadIds);
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            File.Delete(globalStatePath);
+            File.Delete(statePath);
+        }
+    }
+
+    [Fact]
+    public async Task Project_sidebar_reader_does_not_count_project_pinned_or_sectioned_threads_as_recent()
+    {
+        var globalStatePath = Path.GetTempFileName();
+        var statePath = Path.GetTempFileName();
+        try
+        {
+            await File.WriteAllTextAsync(globalStatePath, "{}");
+            await using (var connection = new SqliteConnection($"Data Source={statePath}"))
+            {
+                await connection.OpenAsync();
+                await using var command = connection.CreateCommand();
+                command.CommandText = """
+                    CREATE TABLE threads (
+                        id TEXT, archived INTEGER, preview TEXT, recency_at_ms INTEGER,
+                        project_id TEXT, thread_section_id TEXT, is_pinned INTEGER);
+                    INSERT INTO threads VALUES ('00000000-0000-7000-8000-000000000001', 0, 'project', 9000, 'project-1', NULL, 0);
+                    INSERT INTO threads VALUES ('00000000-0000-7000-8000-000000000002', 0, 'pinned', 8000, NULL, NULL, 1);
+                    INSERT INTO threads VALUES ('00000000-0000-7000-8000-000000000003', 0, 'sectioned', 7000, NULL, 'section-1', 0);
+                    INSERT INTO threads VALUES ('00000000-0000-7000-8000-000000000004', 0, 'recent one', 6000, NULL, NULL, 0);
+                    INSERT INTO threads VALUES ('00000000-0000-7000-8000-000000000005', 0, 'recent two', 5000, NULL, NULL, 0);
+                    """;
+                await command.ExecuteNonQueryAsync();
+            }
+
+            var snapshot = await new CodexProjectSidebarReader(globalStatePath, statePath).ReadAsync();
+
+            Assert.Equal(
+                [
+                    "00000000-0000-7000-8000-000000000004",
+                    "00000000-0000-7000-8000-000000000005"
+                ],
+                snapshot.RecentThreadIds);
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            File.Delete(globalStatePath);
+            File.Delete(statePath);
+        }
+    }
+
+    [Fact]
     public async Task Project_sidebar_reader_does_not_drop_unarchived_threads_missing_from_projectless_list()
     {
         var globalStatePath = Path.GetTempFileName();
@@ -307,9 +387,7 @@ public sealed class LocalEvidenceReaderTests
                     "22222222-2222-7222-8222-222222222222",
                     "33333333-3333-7333-8333-333333333333",
                     "44444444-4444-7444-8444-444444444444",
-                    "55555555-5555-7555-8555-555555555555",
-                    "66666666-6666-7666-8666-666666666666",
-                    "77777777-7777-7777-8777-777777777777"
+                    "55555555-5555-7555-8555-555555555555"
                 ],
                 snapshot.RecentThreadIds);
         }
@@ -403,7 +481,7 @@ public sealed class LocalEvidenceReaderTests
             Assert.Equal(["D:\\modern"], project.RootPaths);
             Assert.Equal("modern-project", snapshot.ThreadProjectIds["019fd250-d93d-7ef1-9c46-925273ffd37d"]);
             Assert.Equal(
-                ["019fd251-d93d-7ef1-9c46-925273ffd37d", "019fd250-d93d-7ef1-9c46-925273ffd37d"],
+                ["019fd251-d93d-7ef1-9c46-925273ffd37d"],
                 snapshot.RecentThreadIds);
             Assert.Equal(["019fd253-d93d-7ef1-9c46-925273ffd37d"], snapshot.ArchivedRecentThreadIds);
             Assert.Equal(["019fd250-d93d-7ef1-9c46-925273ffd37d"], snapshot.PinnedThreadIds);

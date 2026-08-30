@@ -99,6 +99,21 @@ public sealed class ConversationImportServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Apply_imports_a_large_single_record_without_loading_the_whole_file()
+    {
+        var paths = await CreateCodexRootAsync();
+        var source = await WriteLargeSourceAsync();
+        var preview = await PreviewAsync(source, paths, "daily");
+
+        var result = await new ConversationImportService(paths, Path.Combine(_root, "backups"))
+            .ApplyAsync(new ConversationImportRequest(preview, new ExistingProjectDestination("daily"), ImportProviderMode.CurrentLogin));
+
+        var imported = Assert.Single(result.ImportedFiles);
+        Assert.True(new FileInfo(imported).Length > 4_000_000);
+        Assert.Equal(1, await CountLinesAsync(imported));
+    }
+
+    [Fact]
     public async Task Apply_restores_state_and_does_not_leave_rollout_when_global_state_write_fails()
     {
         var paths = await CreateCodexRootAsync();
@@ -234,6 +249,32 @@ public sealed class ConversationImportServiceTests : IDisposable
         };
         await File.WriteAllLinesAsync(path, lines.Select(line => line.ToJsonString()));
         return path;
+    }
+
+    private async Task<string> WriteLargeSourceAsync()
+    {
+        var path = Path.Combine(_root, "large.jsonl");
+        var payload = new JsonObject
+        {
+            ["id"] = SourceId,
+            ["timestamp"] = "2026-08-18T00:00:00Z",
+            ["cwd"] = "D:\\AI\\daily",
+            ["source"] = "cli",
+            ["model_provider"] = "openai",
+            ["title"] = "Large",
+            ["content"] = new string('x', 4_000_000)
+        };
+        var metadata = new JsonObject { ["type"] = "session_meta", ["payload"] = payload };
+        await File.WriteAllTextAsync(path, metadata.ToJsonString() + Environment.NewLine);
+        return path;
+    }
+
+    private static async Task<long> CountLinesAsync(string path)
+    {
+        long count = 0;
+        using var reader = new StreamReader(path);
+        while (await reader.ReadLineAsync() is not null) count++;
+        return count;
     }
 
     private static async Task<ConversationImportPreview> PreviewAsync(string source, CodexPaths paths, string? project)

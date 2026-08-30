@@ -130,36 +130,48 @@ public sealed class ConversationImportService(CodexPaths paths, string backupRoo
         ImportProviderMode providerMode,
         CancellationToken cancellationToken)
     {
-        var sourceLines = await File.ReadAllLinesAsync(candidate.SourcePath, Encoding.UTF8, cancellationToken).ConfigureAwait(false);
-        var transformed = new List<string>(sourceLines.Length);
-        foreach (var line in sourceLines)
-        {
-            if (string.IsNullOrWhiteSpace(line)) continue;
-            var node = JsonNode.Parse(line) ?? throw new InvalidOperationException("导入文件包含空 JSON 记录。");
-            if (candidate.HasDuplicateId) ReplaceExactStrings(node, candidate.SourceId, candidate.TargetId);
-            if (node is JsonObject value && string.Equals(value["type"]?.GetValue<string>(), "session_meta", StringComparison.Ordinal) &&
-                value["payload"] is JsonObject payload)
-            {
-                payload["id"] = candidate.TargetId;
-                // Imported JSONL files have no paginated-history service behind them.
-                // Use Codex's local rollout reader instead.
-                if (string.Equals(payload["history_mode"]?.GetValue<string>(), "paginated", StringComparison.OrdinalIgnoreCase))
-                    payload["history_mode"] = "legacy";
-                if (providerMode == ImportProviderMode.CurrentLogin)
-                    payload["model_provider"] = candidate.TargetProvider;
-            }
-            transformed.Add(node.ToJsonString());
-            if (node is JsonObject modernRecord && TryCreateLegacyMessageEvent(modernRecord, out var legacyEvent))
-                transformed.Add(legacyEvent.ToJsonString());
-        }
-
-        if (transformed.Count == 0) throw new InvalidOperationException("导入文件为空。");
         Directory.CreateDirectory(Path.GetDirectoryName(target)!);
         var temporary = target + ".importing";
-        await File.WriteAllLinesAsync(temporary, transformed, new UTF8Encoding(false), cancellationToken).ConfigureAwait(false);
+        var writtenRecords = 0;
         try
         {
-            _ = JsonNode.Parse(transformed[0]);
+            await using var source = new FileStream(candidate.SourcePath, FileMode.Open, FileAccess.Read, FileShare.Read,
+                bufferSize: 64 * 1024, options: FileOptions.Asynchronous | FileOptions.SequentialScan);
+            using var reader = new StreamReader(source, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, bufferSize: 64 * 1024);
+            await using (var destination = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None,
+                bufferSize: 64 * 1024, options: FileOptions.Asynchronous | FileOptions.SequentialScan))
+            {
+                await using (var writer = new StreamWriter(destination, new UTF8Encoding(false), bufferSize: 64 * 1024))
+                {
+                    while (await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false) is { } line)
+                    {
+                        if (string.IsNullOrWhiteSpace(line)) continue;
+                        var node = JsonNode.Parse(line) ?? throw new InvalidOperationException("导入文件包含空 JSON 记录。");
+                        if (candidate.HasDuplicateId) ReplaceExactStrings(node, candidate.SourceId, candidate.TargetId);
+                        if (node is JsonObject value && string.Equals(value["type"]?.GetValue<string>(), "session_meta", StringComparison.Ordinal) &&
+                            value["payload"] is JsonObject payload)
+                        {
+                            payload["id"] = candidate.TargetId;
+                            // Imported JSONL files have no paginated-history service behind them.
+                            // Use Codex's local rollout reader instead.
+                            if (string.Equals(payload["history_mode"]?.GetValue<string>(), "paginated", StringComparison.OrdinalIgnoreCase))
+                                payload["history_mode"] = "legacy";
+                            if (providerMode == ImportProviderMode.CurrentLogin)
+                                payload["model_provider"] = candidate.TargetProvider;
+                        }
+                        await writer.WriteLineAsync(node.ToJsonString().AsMemory(), cancellationToken).ConfigureAwait(false);
+                        writtenRecords++;
+                        if (node is JsonObject modernRecord && TryCreateLegacyMessageEvent(modernRecord, out var legacyEvent))
+                        {
+                            await writer.WriteLineAsync(legacyEvent.ToJsonString().AsMemory(), cancellationToken).ConfigureAwait(false);
+                            writtenRecords++;
+                        }
+                    }
+
+                    if (writtenRecords == 0) throw new InvalidOperationException("导入文件为空。");
+                    await writer.FlushAsync(cancellationToken).ConfigureAwait(false);
+                }
+            }
             File.Move(temporary, target, overwrite: false);
         }
         finally
