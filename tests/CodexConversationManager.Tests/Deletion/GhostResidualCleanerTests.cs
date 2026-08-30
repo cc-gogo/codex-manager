@@ -140,6 +140,109 @@ public sealed class GhostResidualCleanerTests
         }
     }
 
+    [Fact]
+    public async Task DeleteLocalThread_does_not_remove_rollout_when_a_required_database_is_locked()
+    {
+        var root = CreateFixture(includeTargetBody: true);
+        try
+        {
+            var paths = CodexPaths.FromRoot(root);
+            var bodyPath = Path.Combine(paths.Sessions, $"rollout-{TargetId}.jsonl");
+            await using var lockConnection = new SqliteConnection($"Data Source={paths.CatalogDatabase};Pooling=False");
+            await lockConnection.OpenAsync();
+            await using var lockCommand = lockConnection.CreateCommand();
+            lockCommand.CommandText = "BEGIN IMMEDIATE";
+            await lockCommand.ExecuteNonQueryAsync();
+
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                new GhostResidualCleaner(paths, databaseLockTimeout: TimeSpan.Zero)
+                    .DeleteLocalThreadAsync(TargetId, [bodyPath]));
+
+            Assert.True(File.Exists(bodyPath));
+            Assert.Contains(TargetId, await ReadIdsAsync(paths.StateDatabase, "threads", "id"));
+            Assert.Contains(TargetId, await ReadIdsAsync(paths.CatalogDatabase, "local_thread_catalog", "thread_id"));
+        }
+        finally
+        {
+            DeleteFixture(root);
+        }
+    }
+
+    [Fact]
+    public async Task Residual_auditor_reports_modern_history_store_rows()
+    {
+        var root = CreateFixture(includeTargetBody: false);
+        try
+        {
+            var historyPath = Path.Combine(root, "thread_history_1.sqlite");
+            await using (var history = new SqliteConnection($"Data Source={historyPath}"))
+            {
+                await history.OpenAsync();
+                await using var command = history.CreateCommand();
+                command.CommandText = """
+                    CREATE TABLE thread_turns (thread_id TEXT);
+                    CREATE TABLE thread_items (thread_id TEXT);
+                    CREATE TABLE thread_realtime_items (thread_id TEXT);
+                    CREATE TABLE thread_history_projection_state (thread_id TEXT);
+                    INSERT INTO thread_turns VALUES ($target), ($other);
+                    INSERT INTO thread_items VALUES ($target), ($other);
+                    INSERT INTO thread_realtime_items VALUES ($target), ($other);
+                    INSERT INTO thread_history_projection_state VALUES ($target), ($other);
+                    """;
+                command.Parameters.AddWithValue("$target", TargetId);
+                command.Parameters.AddWithValue("$other", OtherId);
+                await command.ExecuteNonQueryAsync();
+            }
+
+            Assert.True(await new ResidualAuditor(CodexPaths.FromRoot(root)).HasResidualsAsync(TargetId));
+        }
+        finally
+        {
+            DeleteFixture(root);
+        }
+    }
+
+    [Fact]
+    public async Task DeleteLocalThread_removes_only_target_rows_from_modern_history_database()
+    {
+        var root = CreateFixture(includeTargetBody: false);
+        try
+        {
+            var paths = CodexPaths.FromRoot(root);
+            var historyPath = paths.ThreadHistoryDatabase;
+            await using (var history = new SqliteConnection($"Data Source={historyPath}"))
+            {
+                await history.OpenAsync();
+                await using var command = history.CreateCommand();
+                command.CommandText = """
+                    CREATE TABLE thread_turns (thread_id TEXT);
+                    CREATE TABLE thread_items (thread_id TEXT);
+                    CREATE TABLE thread_realtime_items (thread_id TEXT);
+                    CREATE TABLE thread_history_projection_state (thread_id TEXT);
+                    INSERT INTO thread_turns VALUES ($target), ($other);
+                    INSERT INTO thread_items VALUES ($target), ($other);
+                    INSERT INTO thread_realtime_items VALUES ($target), ($other);
+                    INSERT INTO thread_history_projection_state VALUES ($target), ($other);
+                    """;
+                command.Parameters.AddWithValue("$target", TargetId);
+                command.Parameters.AddWithValue("$other", OtherId);
+                await command.ExecuteNonQueryAsync();
+            }
+
+            await new GhostResidualCleaner(paths).DeleteLocalThreadAsync(TargetId, []);
+
+            foreach (var table in new[] { "thread_turns", "thread_items", "thread_realtime_items", "thread_history_projection_state" })
+            {
+                Assert.Equal([OtherId], await ReadIdsAsync(historyPath, table, "thread_id"));
+            }
+            Assert.False(await new ResidualAuditor(paths).HasResidualsAsync(TargetId));
+        }
+        finally
+        {
+            DeleteFixture(root);
+        }
+    }
+
     private static string CreateFixture(bool includeTargetBody)
     {
         var baseDirectory = Path.Combine(AppContext.BaseDirectory, "deletion-fixtures");

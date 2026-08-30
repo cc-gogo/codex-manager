@@ -6,6 +6,7 @@ public sealed record CodexPaths(
     string ArchivedSessions,
     string StateDatabase,
     string CatalogDatabase,
+    string ThreadHistoryDatabase,
     string GlobalState)
 {
     public static CodexPaths FromRoot(string absoluteRoot)
@@ -23,6 +24,7 @@ public sealed record CodexPaths(
             Path.Combine(root, "archived_sessions"),
             Path.Combine(root, "state_5.sqlite"),
             Path.Combine(root, "sqlite", "codex-dev.db"),
+            Path.Combine(root, "thread_history_1.sqlite"),
             Path.Combine(root, ".codex-global-state.json"));
     }
 }

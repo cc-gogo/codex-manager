@@ -10,6 +10,7 @@ public sealed class GhostResidualCleaner(
     TimeSpan? databaseLockTimeout = null) : IGhostResidualCleaner, ILocalThreadCleaner
 {
     private readonly GlobalStateIdRemover _globalStateRemover = globalStateRemover ?? new GlobalStateIdRemover();
+    private readonly ThreadDeletionBackupService _backupService = new();
     private readonly int _databaseLockTimeoutSeconds = Math.Max(1, (int)(databaseLockTimeout ?? TimeSpan.FromSeconds(1)).TotalSeconds);
 
     public async Task CleanupAsync(string id, CancellationToken cancellationToken = default)
@@ -27,6 +28,7 @@ public sealed class GhostResidualCleaner(
 
         await DeleteCatalogRowsAsync(id, cancellationToken).ConfigureAwait(false);
         await DeleteStateRowAsync(id, cancellationToken).ConfigureAwait(false);
+        await DeleteHistoryRowsAsync(id, cancellationToken).ConfigureAwait(false);
         await RemoveGlobalStateReferencesAsync(id, cancellationToken).ConfigureAwait(false);
         await RemoveSessionIndexEntryAsync(id, cancellationToken).ConfigureAwait(false);
     }
@@ -41,6 +43,7 @@ public sealed class GhostResidualCleaner(
             throw new ArgumentException("A full UUID is required.", nameof(id));
         }
 
+        var sessionPaths = new List<string>();
         foreach (var path in knownSessionPaths.Distinct(StringComparer.OrdinalIgnoreCase))
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -50,16 +53,36 @@ public sealed class GhostResidualCleaner(
                 throw new InvalidOperationException("A local deletion can only remove known Codex session files.");
             }
 
-            if (File.Exists(fullPath))
-            {
-                File.Delete(fullPath);
-            }
+            sessionPaths.Add(fullPath);
         }
 
-        await DeleteCatalogRowsAsync(id, cancellationToken).ConfigureAwait(false);
-        await DeleteStateRowAsync(id, cancellationToken).ConfigureAwait(false);
-        await RemoveGlobalStateReferencesAsync(id, cancellationToken).ConfigureAwait(false);
-        await RemoveSessionIndexEntryAsync(id, cancellationToken).ConfigureAwait(false);
+        await using var backup = await _backupService.CreateAsync(paths, sessionPaths, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            // Database mutations succeed before any conversation body is removed.
+            await DeleteCatalogRowsAsync(id, cancellationToken).ConfigureAwait(false);
+            await DeleteStateRowAsync(id, cancellationToken).ConfigureAwait(false);
+            await DeleteHistoryRowsAsync(id, cancellationToken).ConfigureAwait(false);
+            await RemoveGlobalStateReferencesAsync(id, cancellationToken).ConfigureAwait(false);
+            await RemoveSessionIndexEntryAsync(id, cancellationToken).ConfigureAwait(false);
+            foreach (var sessionPath in sessionPaths.Where(File.Exists))
+            {
+                File.Delete(sessionPath);
+            }
+        }
+        catch
+        {
+            try
+            {
+                await backup.RestoreAsync(CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (IOException)
+            {
+                // A process holding the database lock can also prevent replacing its backup.
+                // Keep the original actionable lock error; the conversation body is untouched.
+            }
+            throw;
+        }
     }
 
     private async Task RemoveGlobalStateReferencesAsync(string id, CancellationToken cancellationToken)
@@ -133,6 +156,62 @@ public sealed class GhostResidualCleaner(
             await TryRollbackAsync(connection).ConfigureAwait(false);
             throw ToActionableDatabaseException(exception);
         }
+    }
+
+    private async Task DeleteHistoryRowsAsync(string id, CancellationToken cancellationToken)
+    {
+        if (!File.Exists(paths.ThreadHistoryDatabase))
+        {
+            return;
+        }
+
+        await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = paths.ThreadHistoryDatabase,
+            Mode = SqliteOpenMode.ReadWrite,
+            DefaultTimeout = _databaseLockTimeoutSeconds
+        }.ToString());
+        await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await ExecuteAsync(connection, "BEGIN IMMEDIATE", cancellationToken).ConfigureAwait(false);
+            foreach (var table in new[]
+                     {
+                         "thread_turns",
+                         "thread_items",
+                         "thread_realtime_items",
+                         "thread_history_projection_state"
+                     })
+            {
+                if (!await TableExistsAsync(connection, table, cancellationToken).ConfigureAwait(false))
+                {
+                    continue;
+                }
+
+                await using var delete = connection.CreateCommand();
+                delete.CommandText = $"DELETE FROM {table} WHERE thread_id = $id";
+                delete.Parameters.AddWithValue("$id", id);
+                await delete.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            }
+
+            await ExecuteAsync(connection, "COMMIT", cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            await TryRollbackAsync(connection).ConfigureAwait(false);
+            throw ToActionableDatabaseException(exception);
+        }
+    }
+
+    private static async Task<bool> TableExistsAsync(
+        SqliteConnection connection,
+        string table,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = $table LIMIT 1";
+        command.Parameters.AddWithValue("$table", table);
+        return await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is not null;
     }
 
     private async Task RemoveSessionIndexEntryAsync(string id, CancellationToken cancellationToken)

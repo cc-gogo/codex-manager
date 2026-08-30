@@ -20,6 +20,17 @@ public sealed class ResidualAuditor(CodexPaths paths) : IResidualAuditor
             return true;
         }
 
+        foreach (var table in new[]
+                 {
+                     "thread_turns", "thread_items", "thread_realtime_items", "thread_history_projection_state"
+                 })
+        {
+            if (await HasRowAsync(paths.ThreadHistoryDatabase, table, "thread_id", id, cancellationToken).ConfigureAwait(false))
+            {
+                return true;
+            }
+        }
+
         foreach (var globalStatePath in new[] { paths.GlobalState, $"{paths.GlobalState}.bak" })
         {
             if (!File.Exists(globalStatePath))
@@ -78,6 +89,15 @@ public sealed class ResidualAuditor(CodexPaths paths) : IResidualAuditor
             Mode = SqliteOpenMode.ReadOnly
         }.ToString());
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+        await using (var schema = connection.CreateCommand())
+        {
+            schema.CommandText = "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = $table)";
+            schema.Parameters.AddWithValue("$table", table);
+            if (Convert.ToInt64(await schema.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false)) == 0)
+            {
+                return false;
+            }
+        }
         await using var command = connection.CreateCommand();
         command.CommandText = $"SELECT EXISTS(SELECT 1 FROM {table} WHERE {column} = $id)";
         command.Parameters.AddWithValue("$id", id);
