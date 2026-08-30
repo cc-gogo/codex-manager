@@ -302,6 +302,7 @@ public sealed class LocalEvidenceReaderTests
 
             Assert.Equal(
                 [
+                    "88888888-8888-7888-8888-888888888888",
                     "11111111-1111-7111-8111-111111111111",
                     "22222222-2222-7222-8222-222222222222",
                     "33333333-3333-7333-8333-333333333333",
@@ -346,6 +347,68 @@ public sealed class LocalEvidenceReaderTests
             Assert.Equal(
                 ["22222222-2222-7222-8222-222222222222", "11111111-1111-7111-8111-111111111111"],
                 snapshot.ArchivedRecentThreadIds);
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            File.Delete(globalStatePath);
+            File.Delete(statePath);
+        }
+    }
+
+    [Fact]
+    public async Task Project_sidebar_reader_prefers_modern_projects_and_keeps_visible_subagents_in_recent_order()
+    {
+        var globalStatePath = Path.GetTempFileName();
+        var statePath = Path.GetTempFileName();
+        try
+        {
+            await File.WriteAllTextAsync(globalStatePath, """
+                {
+                  "local-projects": {
+                    "legacy-project": { "id": "legacy-project", "name": "Legacy project", "rootPaths": ["D:\\legacy"] }
+                  },
+                  "thread-project-assignments": {
+                    "019fd250-d93d-7ef1-9c46-925273ffd37d": { "projectId": "legacy-project" }
+                  }
+                }
+                """);
+            await using (var connection = new SqliteConnection($"Data Source={statePath}"))
+            {
+                await connection.OpenAsync();
+                await using var command = connection.CreateCommand();
+                command.CommandText = """
+                    CREATE TABLE projects (id TEXT, name TEXT);
+                    CREATE TABLE project_roots (project_id TEXT, path TEXT);
+                    CREATE TABLE thread_sections (id TEXT, name TEXT);
+                    CREATE TABLE threads (
+                        id TEXT, archived INTEGER, preview TEXT, recency_at_ms INTEGER,
+                        project_id TEXT, thread_section_id TEXT, is_pinned INTEGER, thread_source TEXT);
+                    INSERT INTO projects VALUES ('modern-project', 'Modern project');
+                    INSERT INTO project_roots VALUES ('modern-project', 'D:\modern');
+                    INSERT INTO thread_sections VALUES ('section-1', 'Research');
+                    INSERT INTO threads VALUES ('019fd250-d93d-7ef1-9c46-925273ffd37d', 0, 'Visible parent', 100, 'modern-project', 'section-1', 1, 'user');
+                    INSERT INTO threads VALUES ('019fd251-d93d-7ef1-9c46-925273ffd37d', 0, 'Visible child', 200, NULL, NULL, 0, 'subagent');
+                    INSERT INTO threads VALUES ('019fd252-d93d-7ef1-9c46-925273ffd37d', 0, '', 300, NULL, NULL, 0, 'user');
+                    INSERT INTO threads VALUES ('019fd253-d93d-7ef1-9c46-925273ffd37d', 1, 'Archived', 400, NULL, NULL, 0, 'user');
+                    """;
+                await command.ExecuteNonQueryAsync();
+            }
+
+            var snapshot = await new CodexProjectSidebarReader(globalStatePath, statePath).ReadAsync();
+
+            var project = Assert.Single(snapshot.Projects);
+            Assert.Equal("modern-project", project.Id);
+            Assert.Equal("Modern project", project.Name);
+            Assert.Equal(["D:\\modern"], project.RootPaths);
+            Assert.Equal("modern-project", snapshot.ThreadProjectIds["019fd250-d93d-7ef1-9c46-925273ffd37d"]);
+            Assert.Equal(
+                ["019fd251-d93d-7ef1-9c46-925273ffd37d", "019fd250-d93d-7ef1-9c46-925273ffd37d"],
+                snapshot.RecentThreadIds);
+            Assert.Equal(["019fd253-d93d-7ef1-9c46-925273ffd37d"], snapshot.ArchivedRecentThreadIds);
+            Assert.Equal(["019fd250-d93d-7ef1-9c46-925273ffd37d"], snapshot.PinnedThreadIds);
+            Assert.Equal("section-1", snapshot.ThreadSectionIds["019fd250-d93d-7ef1-9c46-925273ffd37d"]);
+            Assert.Equal(new CodexThreadSection("section-1", "Research"), Assert.Single(snapshot.ThreadSections));
         }
         finally
         {

@@ -322,8 +322,41 @@ public sealed class MainViewModel(
         }
 
         var rowsById = eligibleRows.ToDictionary(row => row.Id, StringComparer.OrdinalIgnoreCase);
+        var pinnedRows = _projectSidebar.PinnedThreadIds
+            .Where(id => !assigned.Contains(id))
+            .Where(rowsById.ContainsKey)
+            .Select(id => rowsById[id])
+            .ToList();
+        if (pinnedRows.Count > 0)
+        {
+            var pinned = new ConversationTreeNodeViewModel("置顶对话", null,
+                threadIds: pinnedRows.Select(row => row.Id).ToHashSet(StringComparer.OrdinalIgnoreCase));
+            AddConversationNodes(pinned, pinnedRows);
+            ProjectTree.Add(pinned);
+        }
+
+        var pinnedIds = pinnedRows.Select(row => row.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var sectionedIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var section in _projectSidebar.ThreadSections)
+        {
+            var sectionRows = eligibleRows
+                .Where(row => !assigned.Contains(row.Id) && !pinnedIds.Contains(row.Id))
+                .Where(row => _projectSidebar.ThreadSectionIds.TryGetValue(row.Id, out var sectionId) &&
+                              string.Equals(sectionId, section.Id, StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(row => row.UpdatedAt)
+                .ToList();
+            if (sectionRows.Count == 0) continue;
+
+            var sectionNode = new ConversationTreeNodeViewModel(section.Name, null,
+                threadIds: sectionRows.Select(row => row.Id).ToHashSet(StringComparer.OrdinalIgnoreCase));
+            AddConversationNodes(sectionNode, sectionRows);
+            ProjectTree.Add(sectionNode);
+            foreach (var row in sectionRows) sectionedIds.Add(row.Id);
+        }
+
         var recentRows = recentThreadIds
             .Where(id => !assigned.Contains(id))
+            .Where(id => !pinnedIds.Contains(id) && !sectionedIds.Contains(id))
             .Where(id => prioritizeArchivedRecent || !_projectSidebar.ThreadProjectIds.ContainsKey(id))
             .Where(rowsById.ContainsKey)
             .Select(id => rowsById[id])
@@ -352,6 +385,8 @@ public sealed class MainViewModel(
             .Where(row => row.Category == ConversationCategory.Residual &&
                           !row.IsSubAgent &&
                           !assigned.Contains(row.Id) &&
+                          !pinnedIds.Contains(row.Id) &&
+                          !sectionedIds.Contains(row.Id) &&
                           !recentRows.Contains(row))
             .OrderByDescending(row => row.UpdatedAt)
             .ToList();

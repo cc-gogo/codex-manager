@@ -261,6 +261,31 @@ public sealed class MainViewModelTests
     }
 
     [Fact]
+    public async Task Normal_tree_exposes_unassigned_pinned_and_sectioned_sidebar_conversations()
+    {
+        var pinned = Record("pinned", "Pinned", ConversationCategory.Normal);
+        var sectioned = Record("sectioned", "Sectioned", ConversationCategory.Normal);
+        var sidebar = new FakeSidebar(new CodexProjectSidebarSnapshot(
+            [],
+            new Dictionary<string, string>(),
+            new Dictionary<string, IReadOnlyList<string>>(),
+            [], [])
+        {
+            PinnedThreadIds = [pinned.Id],
+            ThreadSectionIds = new Dictionary<string, string> { [sectioned.Id] = "research" },
+            ThreadSections = [new CodexThreadSection("research", "Research")]
+        });
+        var viewModel = new MainViewModel(new FakeInventory([pinned, sectioned]), new SafeGuard(), projectSidebar: sidebar);
+
+        await viewModel.RefreshAsync();
+
+        var pinnedNode = Assert.Single(viewModel.ProjectTree, node => node.Name == "置顶对话");
+        Assert.Equal([pinned.Id], pinnedNode.Children.Select(node => node.Conversation!.Id).ToArray());
+        var sectionNode = Assert.Single(viewModel.ProjectTree, node => node.Name == "Research");
+        Assert.Equal([sectioned.Id], sectionNode.Children.Select(node => node.Conversation!.Id).ToArray());
+    }
+
+    [Fact]
     public async Task Project_sidebar_conversations_are_normal_even_when_they_are_not_recent()
     {
         var parent = Record("parent", "Parent", ConversationCategory.Residual, "D:\\AI\\railway");
