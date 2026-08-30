@@ -59,7 +59,8 @@ public partial class App : Application
             new CatalogDatabaseReader(paths.CatalogDatabase),
             new GlobalStateReader(paths.GlobalState),
             new ConversationClassifier(),
-            new SessionIndexReader(Path.Combine(codexHome, "session_index.jsonl")));
+            new SessionIndexReader(Path.Combine(codexHome, "session_index.jsonl")),
+            new ThreadRelationshipDatabaseReader(paths.StateDatabase));
         var processGuard = new ExternalCodexProcessGuard(new SystemProcessSnapshotSource());
         // The App Server is optional. ConversationDetailService always falls back to
         // local rollout JSONL files, so installed users can read details offline.

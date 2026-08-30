@@ -222,6 +222,23 @@ public sealed class ConversationInventoryServiceTests
         Assert.Equal(ConversationCategory.Normal, record.Category);
     }
 
+    [Fact]
+    public async Task RefreshLocal_adds_transitive_spawn_descendants_to_parent_evidence()
+    {
+        const string parent = "aaaaaaaa-aaaa-7aaa-8aaa-aaaaaaaaaaaa";
+        const string child = "bbbbbbbb-bbbb-7bbb-8bbb-bbbbbbbbbbbb";
+        const string grandchild = "cccccccc-cccc-7ccc-8ccc-cccccccccccc";
+        var service = new ConversationInventoryService(
+            new FakeAppServerSource([], []),
+            new FakeSessionSource([Session(parent, "parent.jsonl"), Session(child, "child.jsonl"), Session(grandchild, "grandchild.jsonl")]),
+            new FakeStateSource([]), new FakeCatalogSource([]), new FakeGlobalSource([]), new ConversationClassifier(),
+            relationships: new FakeRelationshipSource([new ThreadRelationshipEvidence(parent, child), new ThreadRelationshipEvidence(child, grandchild)]));
+
+        var snapshot = await service.RefreshLocalAsync(InventoryMode.LiveCodex);
+
+        Assert.Equal([child, grandchild], snapshot.Records.Single(record => record.Id == parent).Evidence.DescendantIds.Order().ToArray());
+    }
+
     private static AppServerThread Thread(string id, string? name = null) => new(id, new JsonObject
     {
         ["id"] = id,
@@ -309,6 +326,12 @@ public sealed class ConversationInventoryServiceTests
     private sealed class FakeSessionIndexSource(IReadOnlyList<SessionIndexEvidence> rows) : ISessionIndexEvidenceSource
     {
         public Task<IReadOnlyList<SessionIndexEvidence>> ReadEntriesAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult(rows);
+    }
+
+    private sealed class FakeRelationshipSource(IReadOnlyList<ThreadRelationshipEvidence> rows) : IThreadRelationshipEvidenceSource
+    {
+        public Task<IReadOnlyList<ThreadRelationshipEvidence>> ReadAsync(CancellationToken cancellationToken = default) =>
             Task.FromResult(rows);
     }
 }

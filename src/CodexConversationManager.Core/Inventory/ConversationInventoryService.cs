@@ -13,7 +13,8 @@ public sealed class ConversationInventoryService(
     ICatalogEvidenceSource catalog,
     IGlobalStateEvidenceSource globalState,
     ConversationClassifier classifier,
-    ISessionIndexEvidenceSource? sessionIndex = null) : ILocalFirstConversationInventoryProvider
+    ISessionIndexEvidenceSource? sessionIndex = null,
+    IThreadRelationshipEvidenceSource? relationships = null) : ILocalFirstConversationInventoryProvider
 {
     public async Task<InventorySnapshot> RefreshAsync(
         InventoryMode mode,
@@ -39,8 +40,11 @@ public sealed class ConversationInventoryService(
         var sessionIndexTask = CaptureAsync(
             "session-index", () => sessionIndex?.ReadEntriesAsync(cancellationToken) ?? Task.FromResult((IReadOnlyList<SessionIndexEvidence>)[]),
             (IReadOnlyList<SessionIndexEvidence>)[], errors);
+        var relationshipTask = CaptureAsync(
+            "thread-relationships", () => relationships?.ReadAsync(cancellationToken) ?? Task.FromResult((IReadOnlyList<ThreadRelationshipEvidence>)[]),
+            (IReadOnlyList<ThreadRelationshipEvidence>)[], errors);
 
-        await Task.WhenAll(sessionsTask, stateTask, catalogTask, globalTask, sessionIndexTask)
+        await Task.WhenAll(sessionsTask, stateTask, catalogTask, globalTask, sessionIndexTask, relationshipTask)
             .ConfigureAwait(false);
 
         var merged = new Dictionary<string, EvidenceAccumulator>(StringComparer.OrdinalIgnoreCase);
@@ -49,6 +53,7 @@ public sealed class ConversationInventoryService(
         AddCatalog(catalogTask.Result, merged);
         AddGlobal(globalTask.Result, merged);
         AddSessionIndex(sessionIndexTask.Result, merged);
+        AddRelationships(relationshipTask.Result, merged);
 
         var readAt = DateTimeOffset.Now;
         var diagnostics = new[]
@@ -59,7 +64,8 @@ public sealed class ConversationInventoryService(
             Diagnostic("state-db", stateTask.Result.Count),
             Diagnostic("catalog-db", catalogTask.Result.Count),
             Diagnostic("global-state", globalTask.Result.Count),
-            Diagnostic("session-index", sessionIndexTask.Result.Count)
+            Diagnostic("session-index", sessionIndexTask.Result.Count),
+            Diagnostic("thread-relationships", relationshipTask.Result.Count)
         };
         return BuildSnapshot(merged, errors, diagnostics);
 
@@ -270,6 +276,34 @@ public sealed class ConversationInventoryService(
         }
     }
 
+    private static void AddRelationships(
+        IReadOnlyList<ThreadRelationshipEvidence> edges,
+        IDictionary<string, EvidenceAccumulator> merged)
+    {
+        var children = edges
+            .Where(edge => !string.IsNullOrWhiteSpace(edge.ParentId) && !string.IsNullOrWhiteSpace(edge.ChildId))
+            .GroupBy(edge => edge.ParentId, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.Select(edge => edge.ChildId).Distinct(StringComparer.OrdinalIgnoreCase).ToList(), StringComparer.OrdinalIgnoreCase);
+
+        foreach (var (parent, accumulator) in merged)
+        {
+            var discovered = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var pending = new Stack<string>();
+            pending.Push(parent);
+            while (pending.Count > 0)
+            {
+                var current = pending.Pop();
+                if (!children.TryGetValue(current, out var directChildren)) continue;
+                foreach (var child in directChildren)
+                {
+                    if (discovered.Add(child)) pending.Push(child);
+                }
+            }
+
+            accumulator.DescendantIds.AddRange(discovered.Where(id => !string.Equals(id, parent, StringComparison.OrdinalIgnoreCase)));
+        }
+    }
+
     private static void AddEvidence(
         ConversationEvidence evidence,
         IDictionary<string, EvidenceAccumulator> merged)
@@ -292,6 +326,7 @@ public sealed class ConversationInventoryService(
         value.CreatedAt = Earlier(value.CreatedAt, evidence.CreatedAt);
         value.UpdatedAt = Later(value.UpdatedAt, evidence.UpdatedAt);
         value.ParseErrors.AddRange(evidence.ParseErrors);
+        value.DescendantIds.AddRange(evidence.DescendantIds);
         foreach (var title in evidence.Titles) value.AddTitle(title);
     }
 
@@ -337,6 +372,7 @@ public sealed class ConversationInventoryService(
         public string? SourceKind { get; set; }
         public string? ThreadSource { get; set; }
         public List<string> ParseErrors { get; } = [];
+        public List<string> DescendantIds { get; } = [];
         public List<string> Titles { get; } = [];
         public string? Cwd { get; set; }
         public DateTimeOffset? CreatedAt { get; set; }
@@ -378,6 +414,7 @@ public sealed class ConversationInventoryService(
             SourceKind = SourceKind,
             ThreadSource = ThreadSource,
             ParseErrors = ParseErrors,
+            DescendantIds = DescendantIds.Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
             Titles = Titles,
             Cwd = Cwd,
             CreatedAt = CreatedAt,
