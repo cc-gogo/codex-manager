@@ -14,7 +14,9 @@ public sealed class MainViewModelTests
     {
         var normal = Record("normal", "Normal", ConversationCategory.Normal);
         var archived = Record("archived", "Archived", ConversationCategory.Archived);
-        var viewModel = new MainViewModel(new FakeInventory([normal, archived]), new SafeGuard());
+        var sidebar = new FakeSidebar(new CodexProjectSidebarSnapshot(
+            [], new Dictionary<string, string>(), new Dictionary<string, IReadOnlyList<string>>(), [], [normal.Id]));
+        var viewModel = new MainViewModel(new FakeInventory([normal, archived]), new SafeGuard(), projectSidebar: sidebar);
 
         await viewModel.RefreshAsync();
 
@@ -45,8 +47,10 @@ public sealed class MainViewModelTests
     public async Task External_Codex_process_allows_direct_delete_but_warns_about_possible_residuals()
     {
         var record = Record("019fd5b1-a888-7801-ab5b-6f1bbba8663f", "First", ConversationCategory.Normal);
+        var sidebar = new FakeSidebar(new CodexProjectSidebarSnapshot(
+            [], new Dictionary<string, string>(), new Dictionary<string, IReadOnlyList<string>>(), [], [record.Id]));
         var viewModel = new MainViewModel(
-            new FakeInventory([record]), new BlockingGuard());
+            new FakeInventory([record]), new BlockingGuard(), projectSidebar: sidebar);
 
         await viewModel.RefreshAsync();
 
@@ -57,7 +61,7 @@ public sealed class MainViewModelTests
     }
 
     [Fact]
-    public async Task Project_tree_assigns_a_shared_root_to_only_the_first_codex_project()
+    public async Task Project_tree_does_not_infer_project_membership_from_a_shared_root()
     {
         var sharedRoot = "D:\\codex\\日常对话";
         var record = Record("thread", "Shared", ConversationCategory.Normal, sharedRoot);
@@ -74,10 +78,10 @@ public sealed class MainViewModelTests
 
         await viewModel.RefreshAsync();
 
-        var daily = Assert.Single(viewModel.ProjectTree, node => node.Name == "日常对话");
-        Assert.Contains(daily.Children, node => node.Conversation?.Id == record.Id);
+        Assert.DoesNotContain(viewModel.ProjectTree, node => node.Name == "日常对话");
         Assert.DoesNotContain(viewModel.ProjectTree, node => node.Name == "nextsay");
-        Assert.DoesNotContain(viewModel.ProjectTree, node => node.IsRecent);
+        var recent = Assert.Single(viewModel.ProjectTree, node => node.IsRecent);
+        Assert.Contains(recent.Children, node => node.Conversation?.Id == record.Id);
     }
 
     [Fact]
@@ -89,7 +93,7 @@ public sealed class MainViewModelTests
             new CodexProject("daily", "日常对话", ["D:\\codex\\日常对话"], 1)
         ],
         new Dictionary<string, string>(),
-        new Dictionary<string, IReadOnlyList<string>>()));
+        new Dictionary<string, IReadOnlyList<string>> { ["daily"] = [record.Id] }));
         var viewModel = new MainViewModel(new FakeInventory([record]), new SafeGuard(), projectSidebar: sidebar);
 
         await viewModel.RefreshAsync();
@@ -200,7 +204,7 @@ public sealed class MainViewModelTests
             new CodexProject("railway", "railway", ["D:\\AI\\railway"], 1)
         ],
         new Dictionary<string, string> { [archived.Id] = "railway" },
-        new Dictionary<string, IReadOnlyList<string>>(),
+        new Dictionary<string, IReadOnlyList<string>> { ["railway"] = [archived.Id] },
         [],
         [])
         {
@@ -225,7 +229,7 @@ public sealed class MainViewModelTests
             new CodexProject("railway", "railway", ["D:\\AI\\railway"], 1)
         ],
         new Dictionary<string, string> { [archived.Id] = "railway" },
-        new Dictionary<string, IReadOnlyList<string>>(),
+        new Dictionary<string, IReadOnlyList<string>> { ["railway"] = [archived.Id] },
         [],
         [])
         {
@@ -263,7 +267,7 @@ public sealed class MainViewModelTests
     }
 
     [Fact]
-    public async Task Normal_and_subagent_categories_both_expose_subagent_conversations()
+    public async Task Unindexed_subagent_is_only_exposed_by_the_subagent_category()
     {
         var normal = Record("normal", "Normal", ConversationCategory.Normal);
         var subagent = Record("subagent", "Subagent", ConversationCategory.Normal, isSubAgent: true);
@@ -277,8 +281,9 @@ public sealed class MainViewModelTests
 
         await viewModel.RefreshAsync();
 
-        var normalSubagents = Assert.Single(viewModel.ProjectTree, node => node.Name == "子代理对话");
-        Assert.Equal([subagent.Id], normalSubagents.Children.Select(node => node.Conversation!.Id).ToArray());
+        var recent = Assert.Single(viewModel.ProjectTree, node => node.IsRecent);
+        Assert.Equal([normal.Id], recent.Children.Select(node => node.Conversation!.Id).ToArray());
+        Assert.DoesNotContain(viewModel.VisibleRows, row => row.Id == subagent.Id);
 
         viewModel.SelectedCategory = ConversationCategory.SubAgent;
 
@@ -322,7 +327,7 @@ public sealed class MainViewModelTests
             new CodexProject("railway", "railway", ["D:\\AI\\railway"], 1)
         ],
         new Dictionary<string, string>(),
-        new Dictionary<string, IReadOnlyList<string>>(),
+        new Dictionary<string, IReadOnlyList<string>> { ["railway"] = [parent.Id, subagent.Id] },
         [],
         []));
         var viewModel = new MainViewModel(new FakeInventory([parent, subagent]), new SafeGuard(), projectSidebar: sidebar);
@@ -339,6 +344,30 @@ public sealed class MainViewModelTests
         viewModel.SelectedCategory = ConversationCategory.SubAgent;
 
         Assert.Equal([subagent.Id], viewModel.VisibleRows.Select(row => row.Id).ToArray());
+    }
+
+    [Fact]
+    public async Task Normal_category_moves_an_unindexed_project_path_to_residual()
+    {
+        var unindexed = Record("unindexed", "Not in Codex sidebar", ConversationCategory.Normal, "D:\\AI\\railway");
+        var sidebar = new FakeSidebar(new CodexProjectSidebarSnapshot(
+        [
+            new CodexProject("railway", "railway", ["D:\\AI\\railway"], 1)
+        ],
+        new Dictionary<string, string> { [unindexed.Id] = "railway" },
+        new Dictionary<string, IReadOnlyList<string>>(),
+        [], []));
+        var viewModel = new MainViewModel(new FakeInventory([unindexed]), new SafeGuard(), projectSidebar: sidebar);
+
+        await viewModel.RefreshAsync();
+
+        Assert.Empty(viewModel.VisibleRows);
+        Assert.Empty(viewModel.ProjectTree);
+
+        viewModel.SelectedCategory = ConversationCategory.Residual;
+
+        var residual = Assert.Single(viewModel.ProjectTree, node => node.Name == "残留对话");
+        Assert.Equal([unindexed.Id], residual.Children.Select(node => node.Conversation!.Id).ToArray());
     }
 
     [Fact]

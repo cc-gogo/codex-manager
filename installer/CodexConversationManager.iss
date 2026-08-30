@@ -1,6 +1,6 @@
 ; Inno Setup installer for Codex Conversation Manager.
 #define MyAppName "Codex Manager"
-#define MyAppVersion "0.2.6"
+#define MyAppVersion "0.2.7"
 #define MyAppPublisher "Codex Conversation Manager"
 #define MyAppExeName "CodexConversationManager.App.exe"
 

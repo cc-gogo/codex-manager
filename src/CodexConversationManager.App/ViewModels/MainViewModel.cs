@@ -295,19 +295,19 @@ public sealed class MainViewModel(
         ProjectTree.Clear();
         var eligibleRows = Rows.Where(MatchesSelectedCategory).ToList();
         var prioritizeArchivedRecent = _selectedCategory == ConversationCategory.Archived;
-        var recentThreadIds = prioritizeArchivedRecent
-            ? _projectSidebar.ArchivedRecentThreadIds ?? []
-            : _projectSidebar.RecentThreadIds ?? [];
+        var usesCodexSidebarLayout = _selectedCategory is ConversationCategory.Normal or ConversationCategory.Archived;
+        var recentThreadIds = !usesCodexSidebarLayout
+            ? []
+            : prioritizeArchivedRecent
+                ? _projectSidebar.ArchivedRecentThreadIds ?? []
+                : _projectSidebar.RecentThreadIds ?? [];
         var rowsById = eligibleRows.ToDictionary(row => row.Id, StringComparer.OrdinalIgnoreCase);
-        var projectIdByThread = eligibleRows.ToDictionary(row => row.Id, ResolveProjectId, StringComparer.OrdinalIgnoreCase);
         var assigned = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var project in _projectSidebar.Projects)
+        foreach (var project in _projectSidebar.Projects.Where(_ => usesCodexSidebarLayout))
         {
             var projectRows = _projectSidebar.SidebarThreadOrders.TryGetValue(project.Id, out var sidebarThreadIds)
                 ? sidebarThreadIds.Where(rowsById.ContainsKey).Select(id => rowsById[id]).ToList()
-                : eligibleRows.Where(row =>
-                    projectIdByThread.TryGetValue(row.Id, out var projectId) &&
-                    string.Equals(projectId, project.Id, StringComparison.OrdinalIgnoreCase)).ToList();
+                : [];
             if (projectRows.Count > 0)
             {
                 var projectNode = new ConversationTreeNodeViewModel(project.Name, null,
@@ -325,6 +325,7 @@ public sealed class MainViewModel(
         }
 
         var pinnedRows = _projectSidebar.PinnedThreadIds
+            .Where(_ => usesCodexSidebarLayout)
             .Where(id => !assigned.Contains(id))
             .Where(rowsById.ContainsKey)
             .Select(id => rowsById[id])
@@ -339,7 +340,7 @@ public sealed class MainViewModel(
 
         var pinnedIds = pinnedRows.Select(row => row.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var sectionedIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var section in _projectSidebar.ThreadSections)
+        foreach (var section in _projectSidebar.ThreadSections.Where(_ => usesCodexSidebarLayout))
         {
             var sectionRows = eligibleRows
                 .Where(row => !assigned.Contains(row.Id) && !pinnedIds.Contains(row.Id))
@@ -359,7 +360,6 @@ public sealed class MainViewModel(
         var recentRows = recentThreadIds
             .Where(id => !assigned.Contains(id))
             .Where(id => !pinnedIds.Contains(id) && !sectionedIds.Contains(id))
-            .Where(id => prioritizeArchivedRecent || !_projectSidebar.ThreadProjectIds.ContainsKey(id))
             .Where(rowsById.ContainsKey)
             .Select(id => rowsById[id])
             .ToList();
@@ -384,7 +384,7 @@ public sealed class MainViewModel(
         }
 
         var residualRows = eligibleRows
-            .Where(row => row.Category == ConversationCategory.Residual &&
+            .Where(row => IsResidualConversation(row) &&
                           !row.IsSubAgent &&
                           !assigned.Contains(row.Id) &&
                           !pinnedIds.Contains(row.Id) &&
@@ -422,20 +422,25 @@ public sealed class MainViewModel(
     private bool MatchesSelectedCategory(ConversationRowViewModel row) => _selectedCategory switch
     {
         null => true,
-        ConversationCategory.Normal => !IsArchived(row) &&
-            (row.Category == ConversationCategory.Normal || row.IsSubAgent || IsCodexSidebarConversation(row)),
+        ConversationCategory.Normal => !IsArchived(row) && IsCodexSidebarConversation(row),
         ConversationCategory.SubAgent => row.IsSubAgent,
-        ConversationCategory.Residual => row.Category == ConversationCategory.Residual && !IsCodexSidebarConversation(row),
+        ConversationCategory.Residual => IsResidualConversation(row) && !IsCodexSidebarConversation(row),
         _ => row.Category == _selectedCategory
     };
 
     private bool IsCodexSidebarConversation(ConversationRowViewModel row) =>
-        ResolveProjectId(row) is not null ||
-        (!_projectSidebar.ThreadProjectIds.ContainsKey(row.Id) &&
-         (_projectSidebar.RecentThreadIds ?? []).Contains(row.Id, StringComparer.OrdinalIgnoreCase));
+        _projectSidebar.SidebarThreadOrders.Values.Any(ids => ids.Contains(row.Id, StringComparer.OrdinalIgnoreCase)) ||
+        (_projectSidebar.RecentThreadIds ?? []).Contains(row.Id, StringComparer.OrdinalIgnoreCase) ||
+        (_projectSidebar.ArchivedRecentThreadIds ?? []).Contains(row.Id, StringComparer.OrdinalIgnoreCase) ||
+        _projectSidebar.PinnedThreadIds.Contains(row.Id, StringComparer.OrdinalIgnoreCase) ||
+        _projectSidebar.ThreadSectionIds.ContainsKey(row.Id);
 
     private static bool IsArchived(ConversationRowViewModel row) =>
         row.Category == ConversationCategory.Archived || row.Record.Evidence.IsArchived;
+
+    private static bool IsResidualConversation(ConversationRowViewModel row) =>
+        !row.IsSubAgent && !IsArchived(row) &&
+        row.Category is ConversationCategory.Normal or ConversationCategory.Residual or ConversationCategory.Ghost;
 
     private void NotifyCategorySelectionChanged()
     {
@@ -449,7 +454,7 @@ public sealed class MainViewModel(
 
     private string? ResolveProjectId(ConversationRowViewModel row)
     {
-        var sidebarProjectId = _projectSidebar.SidebarThreadOrders
+        return _projectSidebar.SidebarThreadOrders
             .Where(pair => pair.Value.Contains(row.Id, StringComparer.OrdinalIgnoreCase))
             .Select(pair => _projectSidebar.Projects.FirstOrDefault(project =>
                 string.Equals(project.Id, pair.Key, StringComparison.OrdinalIgnoreCase)))
@@ -458,26 +463,6 @@ public sealed class MainViewModel(
             .ThenBy(project => project!.Id, StringComparer.OrdinalIgnoreCase)
             .Select(project => project!.Id)
             .FirstOrDefault();
-        if (sidebarProjectId is not null)
-        {
-            return sidebarProjectId;
-        }
-
-        if (_projectSidebar.ThreadProjectIds.TryGetValue(row.Id, out var id) &&
-            _projectSidebar.Projects.Any(project => string.Equals(project.Id, id, StringComparison.OrdinalIgnoreCase)))
-        {
-            return id;
-        }
-
-        return _projectSidebar.Projects
-            .SelectMany(project => project.RootPaths
-                .Where(root => IsPathUnder(row.Cwd, root))
-                .Select(root => new { project, RootLength = ConversationTreeNodeViewModel.NormalizePath(root).Length }))
-            .OrderByDescending(candidate => candidate.RootLength)
-            .ThenBy(candidate => candidate.project.Order)
-            .ThenBy(candidate => candidate.project.Id, StringComparer.OrdinalIgnoreCase)
-            .Select(candidate => candidate.project.Id)
-            .FirstOrDefault() as string;
     }
 
     private static void AddProjectFolder(
