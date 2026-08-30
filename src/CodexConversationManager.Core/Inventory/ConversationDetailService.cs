@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using CodexConversationManager.Core.AppServer;
 using CodexConversationManager.Core.Domain;
+using CodexConversationManager.Core.LocalData;
 
 namespace CodexConversationManager.Core.Inventory;
 
@@ -136,30 +137,19 @@ public sealed class ConversationDetailService(IConversationDetailReader? appServ
                 {
                     using var document = JsonDocument.Parse(line);
                     var root = document.RootElement;
-                    if (root.TryGetProperty("type", out var responseEnvelopeType) &&
-                        responseEnvelopeType.GetString() == "response_item" &&
-                        root.TryGetProperty("payload", out var responsePayload))
-                    {
-                        AddResponseItemBlocks(responsePayload, blocks);
-                        continue;
-                    }
-
-                    if (!root.TryGetProperty("type", out var envelopeType) ||
-                        envelopeType.GetString() != "event_msg" ||
-                        !root.TryGetProperty("payload", out var payload) ||
-                        !payload.TryGetProperty("message", out var message) ||
-                        message.ValueKind != JsonValueKind.String)
+                    if (!RolloutMessageExtractor.TryExtract(root, out var message))
                     {
                         continue;
                     }
 
-                    var payloadType = payload.TryGetProperty("type", out var type) ? type.GetString() : null;
-                    var role = payloadType?.Contains("user", StringComparison.OrdinalIgnoreCase) == true
-                        ? "user"
-                        : payloadType?.Contains("assistant", StringComparison.OrdinalIgnoreCase) == true
-                            ? "assistant"
-                            : "unknown";
-                    blocks.Add(new ConversationDetailBlock(role, payloadType ?? "message", Limit(message.GetString()!)));
+                    if (IsLegacyCompatibilityEvent(root) && blocks.Count > 0 &&
+                        string.Equals(blocks[^1].Role, message.Role, StringComparison.Ordinal) &&
+                        string.Equals(blocks[^1].Text, message.Text, StringComparison.Ordinal))
+                    {
+                        continue;
+                    }
+
+                    blocks.Add(new ConversationDetailBlock(message.Role, message.Kind, Limit(message.Text)));
                 }
                 catch (JsonException)
                 {
@@ -176,33 +166,16 @@ public sealed class ConversationDetailService(IConversationDetailReader? appServ
         return blocks;
     }
 
-    private static void AddResponseItemBlocks(JsonElement payload, List<ConversationDetailBlock> blocks)
+    private static bool IsLegacyCompatibilityEvent(JsonElement root)
     {
-        if (payload.ValueKind != JsonValueKind.Object ||
-            !payload.TryGetProperty("content", out var content) ||
-            content.ValueKind != JsonValueKind.Array)
-        {
-            return;
-        }
-
-        var role = payload.TryGetProperty("role", out var roleElement) && roleElement.ValueKind == JsonValueKind.String
-            ? roleElement.GetString() ?? "unknown"
-            : "unknown";
-        foreach (var item in content.EnumerateArray())
-        {
-            if (item.ValueKind != JsonValueKind.Object ||
-                !item.TryGetProperty("text", out var textElement) ||
-                textElement.ValueKind != JsonValueKind.String ||
-                string.IsNullOrWhiteSpace(textElement.GetString()))
-            {
-                continue;
-            }
-
-            var kind = item.TryGetProperty("type", out var typeElement) && typeElement.ValueKind == JsonValueKind.String
-                ? typeElement.GetString() ?? "message"
-                : "message";
-            blocks.Add(new ConversationDetailBlock(role, kind, Limit(textElement.GetString()!)));
-        }
+        return root.ValueKind == JsonValueKind.Object &&
+               root.TryGetProperty("type", out var envelopeType) &&
+               string.Equals(envelopeType.GetString(), "event_msg", StringComparison.Ordinal) &&
+               root.TryGetProperty("payload", out var payload) &&
+               payload.ValueKind == JsonValueKind.Object &&
+               payload.TryGetProperty("type", out var type) &&
+               (string.Equals(type.GetString(), "user_message", StringComparison.Ordinal) ||
+                string.Equals(type.GetString(), "agent_message", StringComparison.Ordinal));
     }
 
     private static string? ReadString(JsonNode? value) =>

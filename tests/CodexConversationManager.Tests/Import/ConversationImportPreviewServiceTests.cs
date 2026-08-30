@@ -77,6 +77,31 @@ public sealed class ConversationImportPreviewServiceTests : IDisposable
         Assert.Equal("请帮我整理这份项目的导入流程", Assert.Single(preview.Candidates).Title);
     }
 
+    [Fact]
+    public async Task Preview_uses_modern_user_message_when_session_meta_has_no_title()
+    {
+        var id = "33333333-3333-7333-8333-333333333333";
+        var path = await WriteJsonlAsync("modern-untitled.jsonl", ValidRollout(id, "openai", includeTitle: false) +
+            new JsonObject
+            {
+                ["type"] = "event_msg",
+                ["payload"] = new JsonObject
+                {
+                    ["type"] = "item_completed",
+                    ["item"] = new JsonObject
+                    {
+                        ["type"] = "UserMessage",
+                        ["content"] = new JsonArray(new JsonObject { ["type"] = "Text", ["text"] = "A modern title" })
+                    }
+                }
+            }.ToJsonString() + Environment.NewLine);
+
+        var preview = await new ConversationImportPreviewService().PreviewAsync(
+            [path], "openai", new HashSet<string>(), DuplicateIdResolution.Reject);
+
+        Assert.Equal("A modern title", Assert.Single(preview.Candidates).Title);
+    }
+
     private async Task<string> WriteJsonlAsync(string fileName, string content)
     {
         Directory.CreateDirectory(_root);

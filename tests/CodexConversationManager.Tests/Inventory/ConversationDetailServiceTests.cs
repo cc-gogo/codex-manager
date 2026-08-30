@@ -93,6 +93,35 @@ public sealed class ConversationDetailServiceTests
         }
     }
 
+    [Fact]
+    public async Task Jsonl_completed_items_are_read_once_when_legacy_compatibility_events_follow()
+    {
+        var root = Path.Combine(AppContext.BaseDirectory, "detail-fixtures", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var path = Path.Combine(root, "rollout-11111111-1111-7111-8111-111111111111.jsonl");
+        await File.WriteAllTextAsync(path, """
+            {"type":"session_meta","payload":{"id":"11111111-1111-7111-8111-111111111111"}}
+            {"type":"event_msg","payload":{"type":"item_completed","item":{"id":"user-1","type":"UserMessage","content":[{"type":"text","text":"Modern user text"}]}}}
+            {"type":"event_msg","payload":{"type":"user_message","message":"Modern user text"}}
+            {"type":"event_msg","payload":{"type":"item_completed","item":{"id":"assistant-1","type":"AgentMessage","phase":"final","content":[{"type":"Text","text":"Modern assistant text"}]}}}
+            {"type":"event_msg","payload":{"type":"agent_message","message":"Modern assistant text"}}
+            """);
+        try
+        {
+            var service = new ConversationDetailService(new ThrowingDetailReader());
+
+            var detail = await service.LoadAsync(CreateRecord(path));
+
+            Assert.Collection(detail.Blocks,
+                block => Assert.Equal(("user", "UserMessage", "Modern user text"), (block.Role, block.Kind, block.Text)),
+                block => Assert.Equal(("assistant", "final", "Modern assistant text"), (block.Role, block.Kind, block.Text)));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
     private static ConversationRecord CreateRecord(string? sessionPath = null) => new(
         "11111111-1111-7111-8111-111111111111",
         "test",

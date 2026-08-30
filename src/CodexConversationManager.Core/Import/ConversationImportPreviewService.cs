@@ -1,5 +1,7 @@
 using System.Text;
+using System.Text.Json;
 using System.Text.Json.Nodes;
+using CodexConversationManager.Core.LocalData;
 
 namespace CodexConversationManager.Core.Import;
 
@@ -81,6 +83,12 @@ public sealed class ConversationImportPreviewService : IConversationImportPrevie
             JsonNode? node;
             try
             {
+                using var document = JsonDocument.Parse(line);
+                if (firstUserMessage is null && RolloutMessageExtractor.TryExtract(document.RootElement, out var message) &&
+                    string.Equals(message.Role, "user", StringComparison.Ordinal))
+                {
+                    firstUserMessage = message.Text;
+                }
                 node = JsonNode.Parse(line);
             }
             catch (Exception exception) when (exception is System.Text.Json.JsonException or ArgumentException)
@@ -94,12 +102,6 @@ public sealed class ConversationImportPreviewService : IConversationImportPrevie
             {
                 metadata = value["payload"] as JsonObject
                     ?? throw new ConversationImportFormatException("session_meta 缺少 payload 对象。");
-            }
-            else if (firstUserMessage is null && string.Equals(StringValue(value["type"]), "event_msg", StringComparison.Ordinal) &&
-                     value["payload"] is JsonObject eventPayload &&
-                     string.Equals(StringValue(eventPayload["type"]), "user_message", StringComparison.Ordinal))
-            {
-                firstUserMessage = StringValue(eventPayload["message"]) ?? StringValue(eventPayload["text"]);
             }
         }
 

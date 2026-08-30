@@ -173,32 +173,26 @@ public sealed class ConversationImportService(CodexPaths paths, string backupRoo
         legacyEvent = null!;
         if (!string.Equals(record["type"]?.GetValue<string>(), "event_msg", StringComparison.Ordinal) ||
             record["payload"] is not JsonObject payload ||
-            !string.Equals(payload["type"]?.GetValue<string>(), "item_completed", StringComparison.Ordinal) ||
-            payload["item"] is not JsonObject item)
+            !string.Equals(payload["type"]?.GetValue<string>(), "item_completed", StringComparison.Ordinal))
             return false;
 
-        var itemType = item["type"]?.GetValue<string>();
-        var legacyType = itemType switch
+        using var document = JsonDocument.Parse(record.ToJsonString());
+        if (!RolloutMessageExtractor.TryExtract(document.RootElement, out var message))
+            return false;
+
+        var legacyType = message.Role switch
         {
-            "UserMessage" => "user_message",
-            "AgentMessage" => "agent_message",
+            "user" => "user_message",
+            "assistant" => "agent_message",
             _ => null
         };
-        if (legacyType is null || item["content"] is not JsonArray content)
-            return false;
-
-        var text = string.Join("\n", content
-            .OfType<JsonObject>()
-            .Where(part => string.Equals(part["type"]?.GetValue<string>(), "text", StringComparison.OrdinalIgnoreCase))
-            .Select(part => part["text"]?.GetValue<string>())
-            .Where(value => !string.IsNullOrWhiteSpace(value)));
-        if (string.IsNullOrWhiteSpace(text))
+        if (legacyType is null)
             return false;
 
         var legacyPayload = new JsonObject
         {
             ["type"] = legacyType,
-            ["message"] = text
+            ["message"] = message.Text
         };
         CopyString(payload, legacyPayload, "thread_id");
         CopyString(payload, legacyPayload, "turn_id");
