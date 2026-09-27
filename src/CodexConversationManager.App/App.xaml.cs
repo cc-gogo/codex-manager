@@ -2,7 +2,6 @@ using System.Windows;
 using System.IO;
 using CodexConversationManager.App.ViewModels;
 using CodexConversationManager.App.Services;
-using CodexConversationManager.Core.AppServer;
 using CodexConversationManager.Core.Deletion;
 using CodexConversationManager.Core.Domain;
 using CodexConversationManager.Core.Inventory;
@@ -14,8 +13,6 @@ namespace CodexConversationManager.App;
 
 public partial class App : Application
 {
-    private CodexAppServerClient? _appServer;
-
     protected override async void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
@@ -37,23 +34,9 @@ public partial class App : Application
             settings,
             Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
         var paths = CodexPaths.FromRoot(codexHome);
-        IAppServerInventorySource inventorySource;
         var ownedAppServerPids = new HashSet<int>();
-        try
-        {
-            var transport = new StdioJsonRpcTransport(CodexExecutableLocator.Locate());
-            ownedAppServerPids.Add(transport.ProcessId);
-            _appServer = new CodexAppServerClient(transport);
-            await _appServer.InitializeAsync();
-            inventorySource = _appServer;
-        }
-        catch
-        {
-            inventorySource = new UnavailableAppServerSource();
-        }
-
         var inventory = new ConversationInventoryService(
-            inventorySource,
+            null,
             new SessionScanner(paths),
             new StateDatabaseReader(paths.StateDatabase),
             new CatalogDatabaseReader(paths.CatalogDatabase),
@@ -62,9 +45,7 @@ public partial class App : Application
             new SessionIndexReader(Path.Combine(codexHome, "session_index.jsonl")),
             new ThreadRelationshipDatabaseReader(paths.StateDatabase));
         var processGuard = new ExternalCodexProcessGuard(new SystemProcessSnapshotSource());
-        // The App Server is optional. ConversationDetailService always falls back to
-        // local rollout JSONL files, so installed users can read details offline.
-        IConversationDetailProvider detailProvider = new ConversationDetailService(_appServer);
+        IConversationDetailProvider detailProvider = new ConversationDetailService(null);
         Func<DeletionPlan, IReadOnlyList<ConversationRecord>, Task<IPermanentDeleteExecutor>> deletionFactory =
             async (_, records) =>
             {
@@ -78,8 +59,10 @@ public partial class App : Application
                             .ToList(),
                         StringComparer.OrdinalIgnoreCase);
                 var processState = await processGuard.CheckAsync(ownedAppServerPids).ConfigureAwait(false);
+                if (!processState.IsSafe)
+                    throw new InvalidOperationException("请完全退出 Codex 后再删除对话。");
                 IPermanentDeleteExecutor executor = new LocalPermanentDeleteService(
-                    new GhostResidualCleaner(paths), sessionPathsById, codexMayRewriteIndexes: !processState.IsSafe);
+                    new GhostResidualCleaner(paths), sessionPathsById);
                 return executor;
             };
         var providerSync = new ProviderSyncService(paths, Path.Combine(codexHome, "config.toml"), Path.Combine(AppContext.BaseDirectory, "backups", "provider-sync"));
@@ -110,19 +93,4 @@ public partial class App : Application
         window.Show();
     }
 
-    protected override async void OnExit(ExitEventArgs e)
-    {
-        if (_appServer is not null)
-        {
-            await _appServer.DisposeAsync();
-        }
-
-        base.OnExit(e);
-    }
-
-    private sealed class UnavailableAppServerSource : IAppServerInventorySource
-    {
-        public Task<ThreadListResult> ListAllThreadsAsync(bool archived, bool useStateDbOnly, CancellationToken cancellationToken = default) =>
-            Task.FromException<ThreadListResult>(new InvalidOperationException("Codex App Server is unavailable."));
-    }
 }

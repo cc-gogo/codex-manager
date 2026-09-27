@@ -7,7 +7,7 @@ using CodexConversationManager.Core.LocalData;
 namespace CodexConversationManager.Core.Inventory;
 
 public sealed class ConversationInventoryService(
-    IAppServerInventorySource appServer,
+    IAppServerInventorySource? appServer,
     ISessionEvidenceSource sessions,
     IStateEvidenceSource state,
     ICatalogEvidenceSource catalog,
@@ -16,12 +16,15 @@ public sealed class ConversationInventoryService(
     ISessionIndexEvidenceSource? sessionIndex = null,
     IThreadRelationshipEvidenceSource? relationships = null) : ILocalFirstConversationInventoryProvider
 {
+    public bool HasAppServer => appServer is not null;
+
     public async Task<InventorySnapshot> RefreshAsync(
         InventoryMode mode,
         CancellationToken cancellationToken = default)
     {
         var localSnapshot = await RefreshLocalAsync(mode, cancellationToken).ConfigureAwait(false);
-        return await ReconcileAppServerAsync(localSnapshot, mode, cancellationToken).ConfigureAwait(false);
+        return appServer is null ? localSnapshot :
+            await ReconcileAppServerAsync(localSnapshot, mode, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<InventorySnapshot> RefreshLocalAsync(
@@ -56,10 +59,8 @@ public sealed class ConversationInventoryService(
         AddRelationships(relationshipTask.Result, merged);
 
         var readAt = DateTimeOffset.Now;
-        var diagnostics = new[]
+        var diagnostics = new List<InventoryDiagnostic>
         {
-            new InventoryDiagnostic("app-server-active", 0, readAt, null, InventoryReadStatus.Pending),
-            new InventoryDiagnostic("app-server-archived", 0, readAt, null, InventoryReadStatus.Pending),
             Diagnostic("sessions", sessionsTask.Result.Count),
             Diagnostic("state-db", stateTask.Result.Count),
             Diagnostic("catalog-db", catalogTask.Result.Count),
@@ -67,6 +68,11 @@ public sealed class ConversationInventoryService(
             Diagnostic("session-index", sessionIndexTask.Result.Count),
             Diagnostic("thread-relationships", relationshipTask.Result.Count)
         };
+        if (appServer is not null)
+        {
+            diagnostics.Insert(0, new InventoryDiagnostic("app-server-archived", 0, readAt, null, InventoryReadStatus.Pending));
+            diagnostics.Insert(0, new InventoryDiagnostic("app-server-active", 0, readAt, null, InventoryReadStatus.Pending));
+        }
         return BuildSnapshot(merged, errors, diagnostics);
 
         InventoryDiagnostic Diagnostic(string source, int count) =>
@@ -79,6 +85,7 @@ public sealed class ConversationInventoryService(
         InventoryMode mode,
         CancellationToken cancellationToken = default)
     {
+        if (appServer is null) return localSnapshot;
         var errors = new ConcurrentDictionary<string, string>(localSnapshot.SourceErrors, StringComparer.OrdinalIgnoreCase);
         var useStateDbOnly = mode == InventoryMode.LiveCodex;
         var activeTask = CaptureAsync(
@@ -235,6 +242,9 @@ public sealed class ConversationInventoryService(
     {
         foreach (var row in rows)
         {
+            // The catalog also contains cloud-only ChatGPT entries. This inventory manages
+            // local Codex conversations, so a remote catalog row is not local evidence.
+            if (!string.Equals(row.HostId, "local", StringComparison.OrdinalIgnoreCase)) continue;
             var value = Get(merged, row.Id);
             value.CatalogRows++;
             value.SourceKind ??= row.SourceKind;

@@ -70,16 +70,17 @@ public sealed class GhostResidualCleaner(
                 File.Delete(sessionPath);
             }
         }
-        catch
+        catch (Exception deletionError)
         {
             try
             {
                 await backup.RestoreAsync(CancellationToken.None).ConfigureAwait(false);
             }
-            catch (IOException)
+            catch (Exception restoreError)
             {
-                // A process holding the database lock can also prevent replacing its backup.
-                // Keep the original actionable lock error; the conversation body is untouched.
+                throw new InvalidOperationException(
+                    $"{deletionError.Message} 自动恢复失败；恢复副本已保留在 {backup.DirectoryPath}。请完全退出 Codex 后手动检查。",
+                    new AggregateException(deletionError, restoreError));
             }
             throw;
         }
@@ -112,6 +113,14 @@ public sealed class GhostResidualCleaner(
         try
         {
             await ExecuteAsync(connection, "BEGIN IMMEDIATE", cancellationToken).ConfigureAwait(false);
+            foreach (var table in new[] { "local_thread_catalog_scan_entries", "thread_timeline_ledger" })
+            {
+                if (!await TableExistsAsync(connection, table, cancellationToken).ConfigureAwait(false)) continue;
+                await using var association = connection.CreateCommand();
+                association.CommandText = $"DELETE FROM {table} WHERE thread_id = $id";
+                association.Parameters.AddWithValue("$id", id);
+                await association.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            }
             await using var delete = connection.CreateCommand();
             delete.CommandText = "DELETE FROM local_thread_catalog WHERE thread_id = $id";
             delete.Parameters.AddWithValue("$id", id);
@@ -145,6 +154,21 @@ public sealed class GhostResidualCleaner(
         try
         {
             await ExecuteAsync(connection, "BEGIN IMMEDIATE", cancellationToken).ConfigureAwait(false);
+            foreach (var table in new[] { "thread_attachments", "thread_dynamic_tools" })
+            {
+                if (!await TableExistsAsync(connection, table, cancellationToken).ConfigureAwait(false)) continue;
+                await using var association = connection.CreateCommand();
+                association.CommandText = $"DELETE FROM {table} WHERE thread_id = $id";
+                association.Parameters.AddWithValue("$id", id);
+                await association.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            }
+            if (await TableExistsAsync(connection, "thread_spawn_edges", cancellationToken).ConfigureAwait(false))
+            {
+                await using var edges = connection.CreateCommand();
+                edges.CommandText = "DELETE FROM thread_spawn_edges WHERE parent_thread_id = $id OR child_thread_id = $id";
+                edges.Parameters.AddWithValue("$id", id);
+                await edges.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            }
             await using var delete = connection.CreateCommand();
             delete.CommandText = "DELETE FROM threads WHERE id = $id";
             delete.Parameters.AddWithValue("$id", id);

@@ -6,21 +6,22 @@ namespace CodexConversationManager.Tests.Services;
 public sealed class CodexDesktopRestartServiceTests
 {
     [Fact]
-    public async Task Restart_stops_only_the_codex_desktop_processes_then_launches_the_desktop_app()
+    public async Task Restart_stops_codex_backends_then_launches_the_desktop_app()
     {
         var runtime = new FakeRuntime([
             new ManagedProcess(1, "codex"),
             new ManagedProcess(2, "ChatGPT"),
-            new ManagedProcess(3, "explorer")]);
+            new ManagedProcess(3, "codex-code-mode-host"),
+            new ManagedProcess(4, "explorer")]);
 
         await new CodexDesktopRestartService(runtime).RestartAsync();
 
-        Assert.Equal([2], runtime.StoppedIds);
+        Assert.Equal([1, 2, 3], runtime.StoppedIds);
         Assert.Equal(CodexDesktopRestartService.DesktopAppId, runtime.LaunchedAppId);
     }
 
     [Fact]
-    public async Task Restart_still_launches_codex_when_one_existing_process_cannot_be_closed()
+    public async Task Restart_does_not_launch_codex_when_one_existing_process_cannot_be_closed()
     {
         var runtime = new FakeRuntime([
             new ManagedProcess(1, "codex"),
@@ -28,7 +29,7 @@ public sealed class CodexDesktopRestartServiceTests
 
         var result = await new CodexDesktopRestartService(runtime).RestartAsync();
 
-        Assert.Equal(CodexDesktopRestartService.DesktopAppId, runtime.LaunchedAppId);
+        Assert.Null(runtime.LaunchedAppId);
         Assert.Single(result.Warnings);
         Assert.Contains("2", result.Warnings[0]);
     }

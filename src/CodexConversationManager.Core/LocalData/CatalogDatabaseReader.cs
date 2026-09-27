@@ -40,7 +40,7 @@ public sealed class CatalogDatabaseReader : ICatalogEvidenceSource
                 reader.GetString(2),
                 reader.GetString(3),
                 reader.IsDBNull(4) ? null : reader.GetString(4),
-                reader.GetString(5),
+                reader.IsDBNull(5) ? null : reader.GetString(5),
                 reader.GetInt64(6) != 0,
                 FromUnixSeconds(reader.GetDouble(7)),
                 FromUnixSeconds(reader.GetDouble(8))));

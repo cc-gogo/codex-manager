@@ -179,11 +179,20 @@ public partial class MainWindow : Window
 
     private async void StopCodex_Click(object sender, RoutedEventArgs e)
     {
-        var result = await new CodexDesktopRestartService().StopCodexAsync();
-        var message = result.Warnings.Count == 0 ? "Codex 已退出。" :
-            $"已尝试退出 Codex，但有 {result.Warnings.Count} 个进程未能关闭。";
-        MessageBox.Show(this, message, "退出 Codex", MessageBoxButton.OK,
-            result.Warnings.Count == 0 ? MessageBoxImage.Information : MessageBoxImage.Warning);
+        try
+        {
+            var result = await new CodexDesktopRestartService().StopCodexAsync();
+            await _viewModel.RefreshAsync();
+            var message = result.Warnings.Count == 0 ? "Codex 已退出。" :
+                $"已尝试退出 Codex，但有 {result.Warnings.Count} 个进程未能关闭。";
+            MessageBox.Show(this, message, "退出 Codex", MessageBoxButton.OK,
+                result.Warnings.Count == 0 ? MessageBoxImage.Information : MessageBoxImage.Warning);
+        }
+        catch (Exception exception)
+        {
+            MessageBox.Show(this, $"退出 Codex 失败：{exception.Message}", "退出 Codex",
+                MessageBoxButton.OK, MessageBoxImage.Error);
+        }
     }
 
     private async void RestartCodex_Click(object sender, RoutedEventArgs e)
@@ -202,7 +211,7 @@ public partial class MainWindow : Window
             if (result.Warnings.Count > 0)
             {
                 MessageBox.Show(this,
-                    $"已请求重新打开 Codex，但有 {result.Warnings.Count} 个旧进程未能自动关闭。请手动退出 Codex 后再打开。",
+                    $"有 {result.Warnings.Count} 个旧进程未能自动关闭，因此没有重启 Codex。请手动退出后重试。",
                     "Codex 对话管理器", MessageBoxButton.OK, MessageBoxImage.Warning);
             }
         }

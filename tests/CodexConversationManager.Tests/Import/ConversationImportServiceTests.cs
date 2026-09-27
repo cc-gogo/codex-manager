@@ -30,6 +30,74 @@ public sealed class ConversationImportServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Apply_maps_legacy_sidebar_project_to_modern_database_project()
+    {
+        var paths = await CreateCodexRootAsync();
+        await using (var state = new SqliteConnection($"Data Source={paths.StateDatabase};Pooling=False"))
+        {
+            await state.OpenAsync();
+            await using var command = state.CreateCommand();
+            command.CommandText = """
+                ALTER TABLE threads ADD COLUMN project_id TEXT;
+                CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, position INTEGER NOT NULL,
+                    created_at_ms INTEGER NOT NULL, updated_at_ms INTEGER NOT NULL);
+                CREATE TABLE project_roots (project_id TEXT, position INTEGER, path TEXT);
+                INSERT INTO projects VALUES ('modern-daily', '日常对话', 0, 1, 1);
+                INSERT INTO project_roots VALUES ('modern-daily', 0, 'D:\AI\daily');
+                """;
+            await command.ExecuteNonQueryAsync();
+        }
+        await using (var catalog = new SqliteConnection($"Data Source={paths.CatalogDatabase};Pooling=False"))
+        {
+            await catalog.OpenAsync();
+            await using var command = catalog.CreateCommand();
+            command.CommandText = "ALTER TABLE local_thread_catalog ADD COLUMN project_id TEXT";
+            await command.ExecuteNonQueryAsync();
+        }
+        var source = await WriteSourceAsync();
+        var preview = await PreviewAsync(source, paths, "daily");
+
+        await new ConversationImportService(paths, Path.Combine(_root, "backups"))
+            .ApplyAsync(new ConversationImportRequest(preview, new ExistingProjectDestination("daily"), ImportProviderMode.CurrentLogin));
+
+        Assert.Equal("daily", await ReadProjectAssignmentAsync(paths.GlobalState, SourceId));
+        Assert.Equal("modern-daily", await ReadTextAsync(paths.StateDatabase, "SELECT project_id FROM threads WHERE id = $id"));
+        Assert.Equal("modern-daily", await ReadTextAsync(paths.CatalogDatabase, "SELECT project_id FROM local_thread_catalog WHERE thread_id = $id"));
+    }
+
+    [Fact]
+    public async Task Apply_registers_new_project_in_modern_database_when_available()
+    {
+        var paths = await CreateCodexRootAsync();
+        await using (var state = new SqliteConnection($"Data Source={paths.StateDatabase};Pooling=False"))
+        {
+            await state.OpenAsync();
+            await using var command = state.CreateCommand();
+            command.CommandText = """
+                ALTER TABLE threads ADD COLUMN project_id TEXT;
+                CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, position INTEGER NOT NULL,
+                    created_at_ms INTEGER NOT NULL, updated_at_ms INTEGER NOT NULL);
+                CREATE TABLE project_roots (project_id TEXT, position INTEGER, path TEXT);
+                """;
+            await command.ExecuteNonQueryAsync();
+        }
+        var source = await WriteSourceAsync();
+        var preview = await PreviewAsync(source, paths, null);
+        var parent = Path.Combine(_root, "projects");
+
+        await new ConversationImportService(paths, Path.Combine(_root, "backups"))
+            .ApplyAsync(new ConversationImportRequest(preview, new NewProjectDestination(parent, "Imported"), ImportProviderMode.CurrentLogin));
+
+        var stateProjectId = await ReadTextAsync(paths.StateDatabase, "SELECT project_id FROM threads WHERE id = $id");
+        Assert.False(string.IsNullOrWhiteSpace(stateProjectId));
+        Assert.Equal(stateProjectId, await ReadTextAsync(paths.StateDatabase, "SELECT id FROM projects WHERE id = $id", stateProjectId));
+        Assert.Equal(Path.Combine(parent, "Imported"), await ReadTextAsync(paths.StateDatabase,
+            "SELECT path FROM project_roots WHERE project_id = $id", stateProjectId));
+        Assert.Equal(Path.Combine(parent, "Imported"), await ReadTextAsync(paths.StateDatabase,
+            "SELECT cwd FROM threads WHERE id = $id"));
+    }
+
+    [Fact]
     public async Task Apply_creates_requested_directory_and_registers_new_project()
     {
         var paths = await CreateCodexRootAsync();
@@ -119,7 +187,6 @@ public sealed class ConversationImportServiceTests : IDisposable
         var paths = await CreateCodexRootAsync();
         var source = await WriteSourceAsync();
         var preview = await PreviewAsync(source, paths, "daily");
-        var beforeState = await File.ReadAllTextAsync(paths.StateDatabase);
         var beforeGlobal = await File.ReadAllTextAsync(paths.GlobalState);
         var blockedGlobal = paths.GlobalState + ".blocked";
         File.Move(paths.GlobalState, blockedGlobal);
@@ -134,9 +201,19 @@ public sealed class ConversationImportServiceTests : IDisposable
             File.Move(blockedGlobal, paths.GlobalState);
         }
 
-        Assert.Equal(beforeState, await File.ReadAllTextAsync(paths.StateDatabase));
+        Assert.False(await ThreadExistsAsync(paths.StateDatabase, SourceId));
         Assert.Equal(beforeGlobal, await File.ReadAllTextAsync(paths.GlobalState));
         Assert.False(Directory.EnumerateFiles(paths.Sessions, "*.jsonl", SearchOption.AllDirectories).Any());
+    }
+
+    private static async Task<string?> ReadTextAsync(string database, string sql, string id = SourceId)
+    {
+        await using var connection = new SqliteConnection($"Data Source={database};Mode=ReadOnly;Pooling=False");
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        command.Parameters.AddWithValue("$id", id);
+        return (string?)await command.ExecuteScalarAsync();
     }
 
     private async Task<CodexPaths> CreateCodexRootAsync()

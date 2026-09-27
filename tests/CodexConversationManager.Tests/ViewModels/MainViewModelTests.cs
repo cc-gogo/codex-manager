@@ -44,7 +44,7 @@ public sealed class MainViewModelTests
     }
 
     [Fact]
-    public async Task External_Codex_process_allows_direct_delete_but_warns_about_possible_residuals()
+    public async Task External_Codex_process_blocks_delete_until_it_is_fully_closed()
     {
         var record = Record("019fd5b1-a888-7801-ab5b-6f1bbba8663f", "First", ConversationCategory.Normal);
         var sidebar = new FakeSidebar(new CodexProjectSidebarSnapshot(
@@ -55,9 +55,9 @@ public sealed class MainViewModelTests
         await viewModel.RefreshAsync();
 
         Assert.Single(viewModel.VisibleRows);
-        Assert.True(viewModel.CanDelete);
+        Assert.False(viewModel.CanDelete);
         Assert.Contains("运行", viewModel.DeletionStatus);
-        Assert.Contains("重启 Codex", viewModel.DeletionStatus);
+        Assert.Contains("退出 Codex", viewModel.DeletionStatus);
     }
 
     [Fact]
@@ -494,7 +494,7 @@ public sealed class MainViewModelTests
         Assert.Equal(["local"], viewModel.Rows.Select(row => row.Id).ToArray());
         Assert.Contains("正在后台核对", viewModel.RefreshStatus);
         inventory.CompleteReconciliation([local, appServer]);
-        await WaitUntilAsync(() => viewModel.Rows.Any(row => row.Id == appServer.Id));
+        await WaitUntilAsync(() => !viewModel.RefreshStatus.Contains("正在后台核对", StringComparison.Ordinal));
 
         Assert.Equal(["app-server", "local"], viewModel.Rows.Select(row => row.Id).Order().ToArray());
         Assert.DoesNotContain("正在后台核对", viewModel.RefreshStatus);
@@ -512,7 +512,7 @@ public sealed class MainViewModelTests
         await viewModel.RefreshAsync();
         await viewModel.RefreshAsync();
         inventory.Complete(1, [local, current]);
-        await WaitUntilAsync(() => viewModel.Rows.Any(row => row.Id == current.Id));
+        await WaitUntilAsync(() => !viewModel.RefreshStatus.Contains("正在后台核对", StringComparison.Ordinal));
         inventory.Complete(0, [local, stale]);
         await Task.Delay(50);
 

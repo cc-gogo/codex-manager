@@ -28,7 +28,7 @@ public sealed record CatalogThreadEvidence(
     string DisplayTitle,
     string SourceKind,
     string? ThreadSource,
-    string Cwd,
+    string? Cwd,
     bool IsMissingCandidate,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt);

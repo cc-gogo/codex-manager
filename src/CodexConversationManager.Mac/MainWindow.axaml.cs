@@ -77,6 +77,8 @@ public sealed partial class MainWindow : Window, INotifyPropertyChanged
     private async Task ImportAsync()
     {
         var files=await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions{Title="导入 Codex 对话",AllowMultiple=true,FileTypeFilter=[new FilePickerFileType("JSONL"){Patterns=["*.jsonl"]}]}); if(files.Count==0)return;
+        var safe=await new ExternalCodexProcessGuard(new SystemProcessSnapshotSource()).CheckAsync(new HashSet<int>());
+        if(!safe.IsSafe){Status="导入前必须完全退出 Codex。";return;}
         var paths=CodexPaths.FromRoot(Path.GetFullPath(CodexHome)); var preview=await new ConversationImportPreviewService().PreviewAsync(files.Select(f=>f.Path.LocalPath).ToList(),"openai",Rows.Select(r=>r.Id).ToHashSet(StringComparer.OrdinalIgnoreCase),DuplicateIdResolution.GenerateNewId); if(preview.Candidates.Count==0){Status="没有发现可导入的有效对话。";return;}
         var result=await new ConversationImportService(paths,Path.Combine(AppContext.BaseDirectory,"backups","conversation-import")).ApplyAsync(new ConversationImportRequest(preview,new ProjectlessDestination(),ImportProviderMode.CurrentLogin)); Status=$"已导入 {result.ImportedCount} 条对话。请重启 Codex 刷新左侧列表。"; await RefreshAsync();
     }

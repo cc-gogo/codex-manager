@@ -23,7 +23,9 @@ public sealed class StateDatabaseReader : IStateEvidenceSource
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
         var columns = await ReadColumnNamesAsync(connection, cancellationToken).ConfigureAwait(false);
         var recencyExpression = columns.Contains("recency_at_ms")
-            ? "COALESCE(recency_at_ms, recency_at * 1000, 0)"
+            ? columns.Contains("recency_at")
+                ? "COALESCE(recency_at_ms, recency_at * 1000, 0)"
+                : "COALESCE(recency_at_ms, 0)"
             : columns.Contains("recency_at")
                 ? "COALESCE(recency_at * 1000, 0)"
                 : "0";

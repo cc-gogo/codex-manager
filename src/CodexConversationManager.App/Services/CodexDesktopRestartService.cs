@@ -17,14 +17,8 @@ public sealed class CodexDesktopRestartService(IManagedProcessRuntime? runtime =
     public const string DesktopAppId = "OpenAI.Codex_2p2nqsd0c76g0!App";
     private readonly IManagedProcessRuntime _runtime = runtime ?? new SystemManagedProcessRuntime();
 
-    public async Task<CodexRestartResult> RestartAsync(CancellationToken cancellationToken = default)
-    {
-        var result = await StopProcessesAsync(
-            _runtime.GetProcesses().Where(process => string.Equals(process.Name, "ChatGPT", StringComparison.OrdinalIgnoreCase)),
-            cancellationToken).ConfigureAwait(false);
-        _runtime.LaunchDesktopApp(DesktopAppId);
-        return result;
-    }
+    public Task<CodexRestartResult> RestartAsync(CancellationToken cancellationToken = default) =>
+        RestartCodexAsync(cancellationToken);
 
     public Task<CodexRestartResult> StopCodexAsync(CancellationToken cancellationToken = default) =>
         StopProcessesAsync(_runtime.GetProcesses().Where(process =>
@@ -35,7 +29,7 @@ public sealed class CodexDesktopRestartService(IManagedProcessRuntime? runtime =
     public async Task<CodexRestartResult> RestartCodexAsync(CancellationToken cancellationToken = default)
     {
         var result = await StopCodexAsync(cancellationToken).ConfigureAwait(false);
-        _runtime.LaunchDesktopApp(DesktopAppId);
+        if (result.Warnings.Count == 0) _runtime.LaunchDesktopApp(DesktopAppId);
         return result;
     }
 

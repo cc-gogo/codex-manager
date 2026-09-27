@@ -7,13 +7,14 @@ public sealed class CodexProjectSidebarReader(string path, string? stateDatabase
 {
     public async Task<CodexProjectSidebarSnapshot> ReadAsync(CancellationToken cancellationToken = default)
     {
-        await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read,
-            FileShare.ReadWrite | FileShare.Delete, 4096, FileOptions.Asynchronous | FileOptions.SequentialScan);
-        var root = await JsonNode.ParseAsync(stream, cancellationToken: cancellationToken).ConfigureAwait(false) as JsonObject;
-        if (root is null)
+        JsonObject? root = null;
+        if (File.Exists(path))
         {
-            return CodexProjectSidebarSnapshot.Empty;
+            await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete, 4096, FileOptions.Asynchronous | FileOptions.SequentialScan);
+            root = await JsonNode.ParseAsync(stream, cancellationToken: cancellationToken).ConfigureAwait(false) as JsonObject;
         }
+        root ??= new JsonObject();
 
         var order = (root["project-order"] as JsonArray ?? [])
             .Select(Value).Where(value => value is not null).Cast<string>().ToList();
@@ -68,7 +69,7 @@ public sealed class CodexProjectSidebarReader(string path, string? stateDatabase
             .Where(id => id is not null && Guid.TryParseExact(id, "D", out _))
             .Cast<string>()
             .ToList();
-        var modern = await ReadModernSidebarAsync(sidebarOrders,
+        var modern = await ReadModernSidebarAsync(sidebarOrders, assignments.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase),
             projectlessThreadIdNodes is null ? null : projectlessThreadIds, cancellationToken).ConfigureAwait(false);
         var modernProjectIdMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         if (modern.Projects.Count > 0)
@@ -84,7 +85,8 @@ public sealed class CodexProjectSidebarReader(string path, string? stateDatabase
             }
         }
 
-        AddWorkspaceRootAssignments(assignments, projects, modern.Threads);
+        AddWorkspaceRootAssignments(assignments, projects, modern.Threads,
+            projectlessThreadIds.ToHashSet(StringComparer.OrdinalIgnoreCase));
         AddMissingProjectSidebarOrders(sidebarOrders, projects, assignments,
             modern.Threads.Select(thread => thread.Id));
         projects = projects.Where(project =>
@@ -177,11 +179,13 @@ public sealed class CodexProjectSidebarReader(string path, string? stateDatabase
     private static void AddWorkspaceRootAssignments(
         IDictionary<string, string> assignments,
         IReadOnlyList<CodexProject> projects,
-        IEnumerable<ModernThread> threads)
+        IEnumerable<ModernThread> threads,
+        IReadOnlySet<string> projectlessThreadIds)
     {
         foreach (var thread in threads)
         {
-            if (assignments.ContainsKey(thread.Id) || string.IsNullOrWhiteSpace(thread.WorkingDirectory)) continue;
+            if (assignments.ContainsKey(thread.Id) || projectlessThreadIds.Contains(thread.Id) ||
+                string.IsNullOrWhiteSpace(thread.WorkingDirectory)) continue;
 
             var matchingProjects = projects
                 .SelectMany(project => project.RootPaths.Select(root => (project, root)))
@@ -213,6 +217,7 @@ public sealed class CodexProjectSidebarReader(string path, string? stateDatabase
 
     private async Task<ModernSidebarState> ReadModernSidebarAsync(
         IReadOnlyDictionary<string, IReadOnlyList<string>> sidebarOrders,
+        IReadOnlySet<string> assignedThreadIds,
         IReadOnlyList<string>? explicitRecentThreadIds,
         CancellationToken cancellationToken)
     {
@@ -242,6 +247,8 @@ public sealed class CodexProjectSidebarReader(string path, string? stateDatabase
 
         var projectSidebarThreadIds = sidebarOrders.Values.SelectMany(ids => ids)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        projectSidebarThreadIds.UnionWith(assignedThreadIds);
+        projectSidebarThreadIds.UnionWith(threadProjectIds.Keys);
         var recentThreadIds = await ReadRecentThreadIdsAsync(connection, columns, false, projectSidebarThreadIds,
             explicitRecentThreadIds, cancellationToken).ConfigureAwait(false);
         var archivedRecentThreadIds = await ReadRecentThreadIdsAsync(connection, columns, true, projectSidebarThreadIds,

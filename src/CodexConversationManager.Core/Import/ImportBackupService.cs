@@ -18,7 +18,8 @@ public static class ImportBackupService
         {
             cancellationToken.ThrowIfCancellationRequested();
             var copy = Path.Combine(root, Path.GetFileName(original) + ".bak");
-            File.Copy(original, copy, overwrite: true);
+            if (SqliteSnapshot.IsDatabase(original)) SqliteSnapshot.Copy(original, copy);
+            else File.Copy(original, copy, overwrite: true);
             files.Add((original, copy));
         }
         return Task.FromResult(new ImportBackup(root, files));
@@ -36,7 +37,8 @@ public static class ImportBackupService
         foreach (var (original, copy) in backup.Files)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            File.Copy(copy, original, overwrite: true);
+            if (SqliteSnapshot.IsDatabase(original)) SqliteSnapshot.Restore(copy, original);
+            else File.Copy(copy, original, overwrite: true);
         }
         return Task.CompletedTask;
     }

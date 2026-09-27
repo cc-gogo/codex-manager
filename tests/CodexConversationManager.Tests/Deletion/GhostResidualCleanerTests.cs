@@ -14,6 +14,109 @@ public sealed class GhostResidualCleanerTests
     private const string OtherId = "88888888-8888-7888-8888-888888888888";
 
     [Fact]
+    public async Task DeleteLocalThread_removes_modern_associations_for_only_the_target()
+    {
+        var root = CreateFixture(includeTargetBody: false);
+        try
+        {
+            var paths = CodexPaths.FromRoot(root);
+            await using (var state = new SqliteConnection($"Data Source={paths.StateDatabase};Pooling=False"))
+            {
+                await state.OpenAsync();
+                await using var command = state.CreateCommand();
+                command.CommandText = """
+                    CREATE TABLE thread_dynamic_tools (thread_id TEXT, name TEXT);
+                    CREATE TABLE thread_attachments (thread_id TEXT, identity_key TEXT);
+                    CREATE TABLE thread_spawn_edges (parent_thread_id TEXT, child_thread_id TEXT);
+                    INSERT INTO thread_dynamic_tools VALUES ($target, 'tool'), ($other, 'keep');
+                    INSERT INTO thread_attachments VALUES ($target, 'asset'), ($other, 'keep');
+                    INSERT INTO thread_spawn_edges VALUES ($target, $other), ($other, $target), ($other, $other);
+                    """;
+                command.Parameters.AddWithValue("$target", TargetId);
+                command.Parameters.AddWithValue("$other", OtherId);
+                await command.ExecuteNonQueryAsync();
+            }
+            await using (var catalog = new SqliteConnection($"Data Source={paths.CatalogDatabase};Pooling=False"))
+            {
+                await catalog.OpenAsync();
+                await using var command = catalog.CreateCommand();
+                command.CommandText = """
+                    CREATE TABLE local_thread_catalog_scan_entries (thread_id TEXT, removed INTEGER);
+                    CREATE TABLE thread_timeline_ledger (thread_id TEXT, payload_json TEXT);
+                    INSERT INTO local_thread_catalog_scan_entries VALUES ($target, 0), ($other, 0);
+                    INSERT INTO thread_timeline_ledger VALUES ($target, '{}'), ($other, '{}');
+                    """;
+                command.Parameters.AddWithValue("$target", TargetId);
+                command.Parameters.AddWithValue("$other", OtherId);
+                await command.ExecuteNonQueryAsync();
+            }
+
+            await new GhostResidualCleaner(paths).DeleteLocalThreadAsync(TargetId, []);
+
+            Assert.Equal([OtherId], await ReadIdsAsync(paths.StateDatabase, "thread_dynamic_tools", "thread_id"));
+            Assert.Equal([OtherId], await ReadIdsAsync(paths.StateDatabase, "thread_attachments", "thread_id"));
+            Assert.Equal([OtherId], await ReadIdsAsync(paths.StateDatabase, "thread_spawn_edges", "parent_thread_id"));
+            Assert.Equal([OtherId], await ReadIdsAsync(paths.CatalogDatabase, "local_thread_catalog_scan_entries", "thread_id"));
+            Assert.Equal([OtherId], await ReadIdsAsync(paths.CatalogDatabase, "thread_timeline_ledger", "thread_id"));
+            Assert.False(await new ResidualAuditor(paths).HasResidualsAsync(TargetId));
+        }
+        finally { DeleteFixture(root); }
+    }
+
+    [Fact]
+    public async Task Deletion_backup_contains_committed_wal_rows_before_checkpoint()
+    {
+        var root = CreateFixture(includeTargetBody: false);
+        try
+        {
+            var paths = CodexPaths.FromRoot(root);
+            await using var state = new SqliteConnection($"Data Source={paths.StateDatabase};Pooling=False");
+            await state.OpenAsync();
+            await using (var command = state.CreateCommand())
+            {
+                command.CommandText = "PRAGMA journal_mode=WAL";
+                await command.ExecuteNonQueryAsync();
+                command.CommandText = "INSERT INTO threads VALUES ($id)";
+                command.Parameters.AddWithValue("$id", "77777777-7777-7777-8777-777777777777");
+                await command.ExecuteNonQueryAsync();
+            }
+            await using var backup = await new ThreadDeletionBackupService().CreateAsync(paths, []);
+            var snapshot = Directory.EnumerateFiles(root, "*.backup", SearchOption.AllDirectories)
+                .Order(StringComparer.Ordinal).First();
+
+            try
+            {
+                Assert.Equal(3L, await ReadScalarAsync(snapshot, "SELECT count(*) FROM threads"));
+            }
+            finally
+            {
+                SqliteConnection.ClearAllPools();
+            }
+        }
+        finally { DeleteFixture(root); }
+    }
+
+    [Fact]
+    public async Task Failed_backup_restore_keeps_recovery_files_for_manual_repair()
+    {
+        var root = CreateFixture(includeTargetBody: false);
+        var recovery = Path.Combine(root, "recovery-test");
+        Directory.CreateDirectory(recovery);
+        var preservedFile = Path.Combine(recovery, "data.backup");
+        await File.WriteAllTextAsync(preservedFile, "recovery data");
+        try
+        {
+            var backup = new ThreadDeletionBackup(recovery,
+                [new ThreadDeletionBackup.Entry(Path.Combine(root, "unwritable", "state_5.sqlite"), preservedFile, true)]);
+            await Assert.ThrowsAnyAsync<Exception>(() => backup.RestoreAsync());
+            await backup.DisposeAsync();
+
+            Assert.True(File.Exists(preservedFile));
+        }
+        finally { DeleteFixture(root); }
+    }
+
+    [Fact]
     public async Task Cleanup_removes_only_exact_id_without_creating_backup()
     {
         var root = CreateFixture(includeTargetBody: false);

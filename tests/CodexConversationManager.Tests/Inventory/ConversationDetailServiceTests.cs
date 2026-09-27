@@ -9,6 +9,31 @@ namespace CodexConversationManager.Tests.Inventory;
 public sealed class ConversationDetailServiceTests
 {
     [Fact]
+    public async Task Local_detail_reads_past_512_lines_without_repeating_compatibility_messages_or_truncating_text()
+    {
+        var root = Path.Combine(AppContext.BaseDirectory, "detail-fixtures", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var path = Path.Combine(root, "rollout-11111111-1111-7111-8111-111111111111.jsonl");
+        var longText = new string('X', 40_000);
+        var lines = Enumerable.Repeat("{\"type\":\"turn_context\",\"payload\":{}}", 520).ToList();
+        lines.Add("{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"text\":\"Hello\"}]}}");
+        lines.Add("{\"type\":\"event_msg\",\"payload\":{\"type\":\"item_completed\",\"item\":{\"type\":\"UserMessage\",\"content\":[{\"text\":\"Hello\"}]}}}");
+        lines.Add("{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"text\":\"" + longText + "\"}]}}");
+        await File.WriteAllLinesAsync(path, lines);
+        try
+        {
+            var detail = await new ConversationDetailService(null).LoadAsync(CreateRecord(path));
+
+            Assert.Collection(detail.Blocks,
+                block => Assert.Equal("Hello", block.Text),
+                block => Assert.Equal(longText, block.Text));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+    [Fact]
     public async Task App_server_detail_is_preferred_and_returns_structured_blocks()
     {
         var reader = new FakeDetailReader(new AppServerThread("11111111-1111-7111-8111-111111111111", new JsonObject

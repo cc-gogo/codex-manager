@@ -20,6 +20,13 @@ public sealed class ResidualAuditor(CodexPaths paths) : IResidualAuditor
             return true;
         }
 
+        foreach (var table in new[] { "thread_attachments", "thread_dynamic_tools" })
+            if (await HasRowAsync(paths.StateDatabase, table, "thread_id", id, cancellationToken).ConfigureAwait(false)) return true;
+        foreach (var column in new[] { "parent_thread_id", "child_thread_id" })
+            if (await HasRowAsync(paths.StateDatabase, "thread_spawn_edges", column, id, cancellationToken).ConfigureAwait(false)) return true;
+        foreach (var table in new[] { "local_thread_catalog_scan_entries", "thread_timeline_ledger" })
+            if (await HasRowAsync(paths.CatalogDatabase, table, "thread_id", id, cancellationToken).ConfigureAwait(false)) return true;
+
         foreach (var table in new[]
                  {
                      "thread_turns", "thread_items", "thread_realtime_items", "thread_history_projection_state"

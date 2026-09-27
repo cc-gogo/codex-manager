@@ -8,7 +8,7 @@
 
 A local conversation manager for Codex Desktop. It helps you inspect, organize, back up, import, export, and manage locally stored Codex conversations.
 
-> The Chinese product name is "Codex Conversation Manager".
+> Chinese product name: **Codex 对话管理器**.
 
 ## Features
 
@@ -26,9 +26,9 @@ A local conversation manager for Codex Desktop. It helps you inspect, organize, 
 
 ## Codex compatibility
 
-Codex Manager 0.2.0 is updated for the current Codex Desktop 0.151.x local data layout. It reads modern rollout messages and sidebar state, preserves spawned thread descendants, and adapts imports to both older and newer `threads` database schemas.
+The manager reads local rollout JSONL files, Codex SQLite databases, and the local sidebar state directly. Refresh and conversation details do not start a Codex App Server. In the manager, **Recent** means conversations without a project; it does not follow Codex Desktop's cross-project recent-activity view.
 
-After upgrading Codex Desktop, fully exit Codex before scanning, importing, synchronizing, or deleting conversations, then use **Refresh** in Codex Manager.
+Import, deletion, and provider synchronization use consistent SQLite backups. Fully exit Codex before these operations, then restart it to reload the sidebar.
 
 ## Platforms
 

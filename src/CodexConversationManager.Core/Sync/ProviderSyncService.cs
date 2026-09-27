@@ -57,7 +57,8 @@ public sealed class ProviderSyncService(CodexPaths paths, string configPath, str
                 var relative = Path.GetRelativePath(paths.Root, path);
                 var copy = Path.Combine(backup, relative);
                 Directory.CreateDirectory(Path.GetDirectoryName(copy)!);
-                File.Copy(path, copy, overwrite: true);
+                if (SqliteSnapshot.IsDatabase(path)) SqliteSnapshot.Copy(path, copy);
+                else File.Copy(path, copy, overwrite: true);
                 backedUp.Add((path, copy));
             }
 
@@ -79,7 +80,11 @@ public sealed class ProviderSyncService(CodexPaths paths, string configPath, str
         }
         catch
         {
-            foreach (var item in backedUp) File.Copy(item.Copy, item.Original, overwrite: true);
+            foreach (var item in backedUp)
+            {
+                if (SqliteSnapshot.IsDatabase(item.Original)) SqliteSnapshot.Restore(item.Copy, item.Original);
+                else File.Copy(item.Copy, item.Original, overwrite: true);
+            }
             throw;
         }
     }

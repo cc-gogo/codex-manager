@@ -184,25 +184,26 @@ public sealed class MainViewModel(
         RefreshStatus = "正在读取对话目录";
         var generation = Interlocked.Increment(ref _refreshGeneration);
         var localFirst = inventory as ILocalFirstConversationInventoryProvider;
+        var reconcile = localFirst is not null && (inventory is not ConversationInventoryService service || service.HasAppServer);
         var snapshot = localFirst is null
             ? await inventory.RefreshAsync(InventoryMode.LiveCodex, cancellationToken)
             : await localFirst.RefreshLocalAsync(InventoryMode.LiveCodex, cancellationToken);
         _projectSidebar = projectSidebar is null
             ? CodexProjectSidebarSnapshot.Empty
             : await projectSidebar.ReadAsync(cancellationToken);
-        ApplySnapshot(snapshot, localFirst is not null);
+        ApplySnapshot(snapshot, reconcile);
 
-        if (localFirst is not null)
+        if (reconcile && localFirst is not null)
         {
             _ = ReconcileAppServerAsync(localFirst, snapshot, generation, cancellationToken);
         }
 
         var guard = await processGuard.CheckAsync(_ownedAppServerPids, cancellationToken);
-        CanDelete = true;
+        CanDelete = guard.IsSafe;
         OnPropertyChanged(nameof(CanStartDeletion));
         DeletionStatus = guard.IsSafe
-            ? "可以直接永久删除；删除后请重启 Codex，以使左侧列表生效。"
-            : "Codex 当前正在运行，可以直接删除；删除完成后请重启 Codex，以使左侧列表生效。";
+            ? "可以永久删除；删除后请重启 Codex，以使左侧列表生效。"
+            : "Codex 当前正在运行。请完全退出 Codex 后刷新，再执行永久删除。";
     }
 
     private void ApplySnapshot(InventorySnapshot snapshot, bool isReconciling)

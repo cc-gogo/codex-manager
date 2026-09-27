@@ -69,6 +69,37 @@ public sealed class LocalEvidenceReaderTests
     }
 
     [Fact]
+    public async Task State_reader_accepts_millisecond_recency_without_legacy_seconds_column()
+    {
+        var path = Path.GetTempFileName();
+        try
+        {
+            await using (var connection = new SqliteConnection($"Data Source={path};Pooling=False"))
+            {
+                await connection.OpenAsync();
+                await using var command = connection.CreateCommand();
+                command.CommandText = """
+                    CREATE TABLE threads (id TEXT, rollout_path TEXT, source TEXT, thread_source TEXT,
+                        cwd TEXT, title TEXT, archived INTEGER, created_at INTEGER, updated_at INTEGER,
+                        created_at_ms INTEGER, updated_at_ms INTEGER, recency_at_ms INTEGER);
+                    INSERT INTO threads VALUES ('11111111-1111-7111-8111-111111111111', 'test.jsonl', 'cli', 'user',
+                        'D:\work', 'Test', 0, 1, 2, NULL, NULL, 3000);
+                    """;
+                await command.ExecuteNonQueryAsync();
+            }
+
+            var row = Assert.Single(await new StateDatabaseReader(path).ReadThreadsAsync());
+
+            Assert.Equal(DateTimeOffset.FromUnixTimeMilliseconds(3000), row.RecencyAt);
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
     public async Task Catalog_reader_uses_read_only_mode_and_keeps_missing_candidates()
     {
         var reader = new CatalogDatabaseReader(CodexPaths.FromRoot(FixtureRoot).CatalogDatabase);
@@ -80,6 +111,38 @@ public sealed class LocalEvidenceReaderTests
         Assert.Equal(2, rows.Count);
         Assert.Contains(rows, x => x.Id == "11111111-1111-7111-8111-111111111111" && !x.IsMissingCandidate);
         Assert.Contains(rows, x => x.Id == "44444444-4444-7444-8444-444444444444" && x.IsMissingCandidate);
+    }
+
+    [Fact]
+    public async Task Catalog_reader_keeps_cloud_threads_with_null_working_directory()
+    {
+        var path = Path.GetTempFileName();
+        try
+        {
+            await using (var connection = new SqliteConnection($"Data Source={path};Pooling=False"))
+            {
+                await connection.OpenAsync();
+                await using var command = connection.CreateCommand();
+                command.CommandText = """
+                    CREATE TABLE local_thread_catalog (thread_id TEXT, host_id TEXT, display_title TEXT,
+                        source_kind TEXT, thread_source TEXT, cwd TEXT, missing_candidate INTEGER,
+                        source_created_at REAL, source_updated_at REAL);
+                    INSERT INTO local_thread_catalog VALUES ('11111111-1111-7111-8111-111111111111',
+                        'chatgpt:remote', 'Cloud title', 'chatgpt', NULL, NULL, 0, 1, 2);
+                    """;
+                await command.ExecuteNonQueryAsync();
+            }
+
+            var row = Assert.Single(await new CatalogDatabaseReader(path).ReadCatalogAsync());
+
+            Assert.Null(row.Cwd);
+            Assert.Equal("chatgpt", row.SourceKind);
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            File.Delete(path);
+        }
     }
 
     [Fact]
@@ -461,7 +524,7 @@ public sealed class LocalEvidenceReaderTests
     }
 
     [Fact]
-    public async Task Project_sidebar_reader_does_not_count_pinned_or_sectioned_threads_as_recent_but_keeps_project_threads()
+    public async Task Project_sidebar_reader_excludes_pinned_sectioned_and_project_threads_from_projectless_recent()
     {
         var globalStatePath = Path.GetTempFileName();
         var statePath = Path.GetTempFileName();
@@ -489,7 +552,6 @@ public sealed class LocalEvidenceReaderTests
 
             Assert.Equal(
                 [
-                    "00000000-0000-7000-8000-000000000001",
                     "00000000-0000-7000-8000-000000000004",
                     "00000000-0000-7000-8000-000000000005"
                 ],
@@ -538,6 +600,36 @@ public sealed class LocalEvidenceReaderTests
         {
             SqliteConnection.ClearAllPools();
             File.Delete(globalStatePath);
+            File.Delete(statePath);
+        }
+    }
+
+    [Fact]
+    public async Task Project_sidebar_reader_uses_local_database_when_global_state_file_is_missing()
+    {
+        var globalStatePath = Path.Combine(Path.GetTempPath(), $"missing-global-{Guid.NewGuid():N}.json");
+        var statePath = Path.GetTempFileName();
+        try
+        {
+            await using (var connection = new SqliteConnection($"Data Source={statePath}"))
+            {
+                await connection.OpenAsync();
+                await using var command = connection.CreateCommand();
+                command.CommandText = """
+                    CREATE TABLE threads (id TEXT, archived INTEGER, preview TEXT, recency_at_ms INTEGER,
+                        project_id TEXT, thread_section_id TEXT, is_pinned INTEGER);
+                    INSERT INTO threads VALUES ('11111111-1111-7111-8111-111111111111', 0, 'Local', 100, NULL, NULL, 0);
+                    """;
+                await command.ExecuteNonQueryAsync();
+            }
+
+            var snapshot = await new CodexProjectSidebarReader(globalStatePath, statePath).ReadAsync();
+
+            Assert.Equal(["11111111-1111-7111-8111-111111111111"], snapshot.RecentThreadIds);
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
             File.Delete(statePath);
         }
     }
@@ -601,7 +693,7 @@ public sealed class LocalEvidenceReaderTests
     }
 
     [Fact]
-    public async Task Project_sidebar_reader_excludes_only_threads_explicitly_ordered_in_project_sidebar()
+    public async Task Project_sidebar_reader_excludes_threads_with_project_assignment_from_projectless_recent()
     {
         var globalStatePath = Path.GetTempFileName();
         var statePath = Path.GetTempFileName();
@@ -633,7 +725,6 @@ public sealed class LocalEvidenceReaderTests
 
             Assert.Equal(
                 [
-                    "00000000-0000-7000-8000-000000000002",
                     "00000000-0000-7000-8000-000000000003"
                 ],
                 snapshot.RecentThreadIds);
@@ -672,6 +763,47 @@ public sealed class LocalEvidenceReaderTests
             Assert.Equal(
                 ["22222222-2222-7222-8222-222222222222", "11111111-1111-7111-8111-111111111111"],
                 snapshot.ArchivedRecentThreadIds);
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            File.Delete(globalStatePath);
+            File.Delete(statePath);
+        }
+    }
+
+    [Fact]
+    public async Task Explicit_projectless_thread_stays_projectless_even_when_its_cwd_is_inside_a_project()
+    {
+        var globalStatePath = Path.GetTempFileName();
+        var statePath = Path.GetTempFileName();
+        const string threadId = "11111111-1111-7111-8111-111111111111";
+        try
+        {
+            await File.WriteAllTextAsync(globalStatePath, """
+                {
+                  "local-projects": {"project-a": {"id":"project-a", "name":"Project A", "rootPaths":["D:\\work"]}},
+                  "projectless-thread-ids": ["11111111-1111-7111-8111-111111111111"]
+                }
+                """);
+            await using (var connection = new SqliteConnection($"Data Source={statePath}"))
+            {
+                await connection.OpenAsync();
+                await using var command = connection.CreateCommand();
+                command.CommandText = """
+                    CREATE TABLE threads (id TEXT, archived INTEGER, preview TEXT, recency_at_ms INTEGER,
+                        project_id TEXT, cwd TEXT, thread_section_id TEXT, is_pinned INTEGER);
+                    INSERT INTO threads VALUES ('11111111-1111-7111-8111-111111111111', 0, 'Projectless', 100,
+                        NULL, 'D:\work\notes', NULL, 0);
+                    """;
+                await command.ExecuteNonQueryAsync();
+            }
+
+            var snapshot = await new CodexProjectSidebarReader(globalStatePath, statePath).ReadAsync();
+
+            Assert.Contains(threadId, snapshot.RecentThreadIds!);
+            Assert.DoesNotContain(threadId, snapshot.ThreadProjectIds.Keys);
+            Assert.DoesNotContain(snapshot.SidebarThreadOrders.Values.SelectMany(ids => ids), id => id == threadId);
         }
         finally
         {

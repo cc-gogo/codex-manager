@@ -14,6 +14,43 @@ public sealed class ConversationInventoryServiceTests
     private const string RegressionIdTwo = "019fd5c9-a9aa-7862-adf1-30a3319239cb";
 
     [Fact]
+    public async Task Local_only_refresh_has_no_app_server_dependency_or_diagnostics()
+    {
+        var service = new ConversationInventoryService(
+            null!, new FakeSessionSource([Session(RegressionIdOne, "one.jsonl")]),
+            new FakeStateSource([State(RegressionIdOne, "Local conversation", 100)]),
+            new FakeCatalogSource([]), new FakeGlobalSource([]), new ConversationClassifier());
+
+        var snapshot = await service.RefreshAsync(InventoryMode.LiveCodex);
+
+        Assert.Single(snapshot.Records);
+        Assert.Equal(RegressionIdOne, snapshot.Records[0].Id);
+        Assert.DoesNotContain(snapshot.Diagnostics, item => item.Source.StartsWith("app-server", StringComparison.Ordinal));
+        Assert.Empty(snapshot.SourceErrors);
+    }
+
+    [Fact]
+    public async Task Local_refresh_ignores_cloud_only_catalog_entries()
+    {
+        const string localId = "11111111-1111-7111-8111-111111111111";
+        const string cloudId = "22222222-2222-7222-8222-222222222222";
+        var service = new ConversationInventoryService(
+            null, new FakeSessionSource([Session(localId, "local.jsonl")]),
+            new FakeStateSource([]),
+            new FakeCatalogSource([
+                Catalog(localId, "Local title"),
+                new CatalogThreadEvidence(cloudId, "chatgpt", "Remote title", "chatgpt", null, null,
+                    false, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
+            ]),
+            new FakeGlobalSource([]), new ConversationClassifier());
+
+        var snapshot = await service.RefreshLocalAsync(InventoryMode.LiveCodex);
+
+        Assert.Equal(localId, Assert.Single(snapshot.Records).Id);
+        Assert.Equal("Local title", snapshot.Records[0].DisplayTitle);
+    }
+
+    [Fact]
     public async Task Refresh_unions_all_sources_once_and_keeps_regression_ids_searchable()
     {
         var appServer = new FakeAppServerSource(

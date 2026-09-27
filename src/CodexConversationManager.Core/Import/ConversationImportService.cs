@@ -48,21 +48,22 @@ public sealed class ConversationImportService(CodexPaths paths, string backupRoo
                     throw new InvalidOperationException("新项目目录已存在，请选择其他名称。");
                 createdProjectDirectory = requestedDirectory;
             }
-            var projectId = await PrepareProjectAsync(request.Destination, cancellationToken).ConfigureAwait(false);
+            var project = await PrepareProjectAsync(request.Destination, cancellationToken).ConfigureAwait(false);
 
             var importedFiles = new List<string>();
             foreach (var candidate in request.Preview.Candidates)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var target = GetDestinationPath(candidate);
-                await WriteRolloutAsync(candidate, target, request.ProviderMode, cancellationToken).ConfigureAwait(false);
+                await WriteRolloutAsync(candidate, target, request.ProviderMode,
+                    ResolveImportedCwd(candidate, project), cancellationToken).ConfigureAwait(false);
                 createdFiles.Add(target);
                 importedFiles.Add(target);
             }
 
-            await InsertStateRowsAsync(request.Preview.Candidates, importedFiles, request.ProviderMode, projectId, cancellationToken).ConfigureAwait(false);
-            await UpdateGlobalStateAsync(request.Preview.Candidates, projectId, request.Destination, cancellationToken).ConfigureAwait(false);
-            await ValidateAsync(request.Preview.Candidates, importedFiles, projectId, cancellationToken).ConfigureAwait(false);
+            await InsertStateRowsAsync(request.Preview.Candidates, importedFiles, request.ProviderMode, project, cancellationToken).ConfigureAwait(false);
+            await UpdateGlobalStateAsync(request.Preview.Candidates, project?.GlobalId, request.Destination, cancellationToken).ConfigureAwait(false);
+            await ValidateAsync(request.Preview.Candidates, importedFiles, project?.StateId, cancellationToken).ConfigureAwait(false);
             return new ConversationImportResult(importedFiles, backup.Root, importedFiles.Count);
         }
         catch
@@ -89,14 +90,28 @@ public sealed class ConversationImportService(CodexPaths paths, string backupRoo
         return Path.Combine(paths.Sessions, date.ToString("yyyy"), date.ToString("MM"), date.ToString("dd"), fileName);
     }
 
-    private async Task<string?> PrepareProjectAsync(ImportDestination destination, CancellationToken cancellationToken)
+    private sealed record ProjectRegistration(string GlobalId, string StateId, string RootPath);
+
+    private static string ResolveImportedCwd(ConversationImportCandidate candidate, ProjectRegistration? project)
+    {
+        if (project is null || string.IsNullOrWhiteSpace(project.RootPath)) return candidate.Cwd;
+        var root = NormalizeProjectPath(project.RootPath);
+        var source = NormalizeProjectPath(candidate.Cwd);
+        return source.Equals(root, StringComparison.OrdinalIgnoreCase) ||
+               source.StartsWith(root + "\\", StringComparison.OrdinalIgnoreCase)
+            ? candidate.Cwd : project.RootPath;
+    }
+
+    private async Task<ProjectRegistration?> PrepareProjectAsync(ImportDestination destination, CancellationToken cancellationToken)
     {
         if (destination is ExistingProjectDestination existing)
         {
             var existingRoot = await ReadGlobalStateAsync(cancellationToken).ConfigureAwait(false);
-            if (existingRoot["local-projects"]?[existing.ProjectId] is not JsonObject)
+            if (existingRoot["local-projects"]?[existing.ProjectId] is not JsonObject project)
                 throw new InvalidOperationException("指定的项目不存在。");
-            return existing.ProjectId;
+            var stateId = await ResolveStateProjectIdAsync(existing.ProjectId, project, cancellationToken).ConfigureAwait(false);
+            var rootPath = (project["rootPaths"] as JsonArray)?.FirstOrDefault()?.GetValue<string>() ?? string.Empty;
+            return new ProjectRegistration(existing.ProjectId, stateId, rootPath);
         }
 
         if (destination is ProjectlessDestination) return null;
@@ -121,13 +136,86 @@ public sealed class ConversationImportService(CodexPaths paths, string backupRoo
         root["project-order"] = order;
         order.Add(projectId);
         await WriteGlobalStateAsync(root, cancellationToken).ConfigureAwait(false);
-        return projectId;
+        await RegisterModernProjectAsync(projectId, newProject.ProjectName.Trim(), projectDirectory, cancellationToken)
+            .ConfigureAwait(false);
+        return new ProjectRegistration(projectId, projectId, projectDirectory);
+    }
+
+    private async Task<string> ResolveStateProjectIdAsync(string globalId, JsonObject project, CancellationToken cancellationToken)
+    {
+        await using var connection = new SqliteConnection($"Data Source={paths.StateDatabase};Mode=ReadOnly;Pooling=False");
+        await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+        if (!await TableExistsAsync(connection, "projects", cancellationToken).ConfigureAwait(false) ||
+            !await TableExistsAsync(connection, "project_roots", cancellationToken).ConfigureAwait(false)) return globalId;
+
+        var projectName = project["name"]?.GetValue<string>();
+        var globalRoots = (project["rootPaths"] as JsonArray ?? [])
+            .Select(node => node?.GetValue<string>()).Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => NormalizeProjectPath(value!)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT p.id, p.name, r.path FROM projects p LEFT JOIN project_roots r ON r.project_id = p.id";
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        var candidates = new Dictionary<string, (string Name, List<string> Roots)>(StringComparer.OrdinalIgnoreCase);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            var id = reader.GetString(0);
+            if (!candidates.TryGetValue(id, out var candidate)) candidate = (reader.GetString(1), []);
+            if (!reader.IsDBNull(2)) candidate.Roots.Add(NormalizeProjectPath(reader.GetString(2)));
+            candidates[id] = candidate;
+        }
+        var matches = candidates.Where(pair =>
+            string.Equals(pair.Value.Name, projectName, StringComparison.OrdinalIgnoreCase) &&
+            pair.Value.Roots.Any(globalRoots.Contains)).Select(pair => pair.Key).ToList();
+        if (matches.Count == 1) return matches[0];
+        throw new InvalidOperationException("无法唯一匹配新版 Codex 项目，请刷新项目列表后重试导入。");
+    }
+
+    private async Task RegisterModernProjectAsync(string id, string name, string rootPath, CancellationToken cancellationToken)
+    {
+        await using var connection = new SqliteConnection($"Data Source={paths.StateDatabase};Pooling=False");
+        await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+        if (!await TableExistsAsync(connection, "projects", cancellationToken).ConfigureAwait(false) ||
+            !await TableExistsAsync(connection, "project_roots", cancellationToken).ConfigureAwait(false)) return;
+        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+        await using (var project = connection.CreateCommand())
+        {
+            project.Transaction = transaction;
+            project.CommandText = """
+                INSERT INTO projects (id, name, position, created_at_ms, updated_at_ms)
+                VALUES ($id, $name, (SELECT COALESCE(MAX(position), -1) + 1 FROM projects), $now, $now)
+                """;
+            project.Parameters.AddWithValue("$id", id);
+            project.Parameters.AddWithValue("$name", name);
+            project.Parameters.AddWithValue("$now", now);
+            await project.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
+        await using (var root = connection.CreateCommand())
+        {
+            root.Transaction = transaction;
+            root.CommandText = "INSERT INTO project_roots (project_id, position, path) VALUES ($id, 0, $path)";
+            root.Parameters.AddWithValue("$id", id);
+            root.Parameters.AddWithValue("$path", rootPath);
+            await root.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private static string NormalizeProjectPath(string value) => value.Trim().Replace('/', '\\').TrimEnd('\\');
+
+    private static async Task<bool> TableExistsAsync(SqliteConnection connection, string table, CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=$table)";
+        command.Parameters.AddWithValue("$table", table);
+        return Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false)) != 0;
     }
 
     private async Task WriteRolloutAsync(
         ConversationImportCandidate candidate,
         string target,
         ImportProviderMode providerMode,
+        string cwd,
         CancellationToken cancellationToken)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(target)!);
@@ -152,6 +240,7 @@ public sealed class ConversationImportService(CodexPaths paths, string backupRoo
                             value["payload"] is JsonObject payload)
                         {
                             payload["id"] = candidate.TargetId;
+                            payload["cwd"] = cwd;
                             // Imported JSONL files have no paginated-history service behind them.
                             // Use Codex's local rollout reader instead.
                             if (string.Equals(payload["history_mode"]?.GetValue<string>(), "paginated", StringComparison.OrdinalIgnoreCase))
@@ -227,7 +316,7 @@ public sealed class ConversationImportService(CodexPaths paths, string backupRoo
         IReadOnlyList<ConversationImportCandidate> candidates,
         IReadOnlyList<string> importedFiles,
         ImportProviderMode providerMode,
-        string? projectId,
+        ProjectRegistration? project,
         CancellationToken cancellationToken)
     {
         if (!File.Exists(paths.StateDatabase)) throw new InvalidOperationException("Codex state_5.sqlite 不存在。");
@@ -238,23 +327,25 @@ public sealed class ConversationImportService(CodexPaths paths, string backupRoo
         {
             var candidate = candidates[index];
             var provider = providerMode == ImportProviderMode.CurrentLogin ? candidate.TargetProvider : candidate.SourceProvider;
-            await InsertThreadAsync(connection, transaction, candidate, importedFiles[index], provider, projectId, cancellationToken).ConfigureAwait(false);
+            await InsertThreadAsync(connection, transaction, candidate, importedFiles[index], provider,
+                project?.StateId, ResolveImportedCwd(candidate, project), cancellationToken).ConfigureAwait(false);
         }
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
 
         if (File.Exists(paths.CatalogDatabase))
-            await InsertCatalogRowsAsync(candidates, providerMode, cancellationToken).ConfigureAwait(false);
+            await InsertCatalogRowsAsync(candidates, providerMode, project, cancellationToken).ConfigureAwait(false);
     }
 
     private static async Task InsertThreadAsync(SqliteConnection connection, SqliteTransaction transaction,
-        ConversationImportCandidate candidate, string rolloutPath, string provider, string? projectId, CancellationToken cancellationToken)
+        ConversationImportCandidate candidate, string rolloutPath, string provider, string? projectId,
+        string cwd, CancellationToken cancellationToken)
     {
         var columns = await ReadColumnsAsync(connection, transaction, "threads", cancellationToken).ConfigureAwait(false);
         var values = new Dictionary<string, (string Parameter, object? Value)>(StringComparer.OrdinalIgnoreCase)
         {
             ["id"] = ("$id", candidate.TargetId), ["rollout_path"] = ("$rollout", rolloutPath),
             ["created_at"] = ("$created", candidate.CreatedAt.ToUnixTimeSeconds()), ["updated_at"] = ("$updated", candidate.UpdatedAt.ToUnixTimeSeconds()),
-            ["source"] = ("$source", "cli"), ["model_provider"] = ("$provider", provider), ["cwd"] = ("$cwd", candidate.Cwd),
+            ["source"] = ("$source", "cli"), ["model_provider"] = ("$provider", provider), ["cwd"] = ("$cwd", cwd),
             ["title"] = ("$title", candidate.Title), ["sandbox_policy"] = ("$sandbox", "workspace-write"), ["approval_mode"] = ("$approval", "on-request"),
             ["tokens_used"] = ("$tokens", 0), ["has_user_event"] = ("$has_user", 1), ["archived"] = ("$archived", 0),
             ["preview"] = ("$preview", candidate.Title), ["recency_at"] = ("$recency", candidate.UpdatedAt.ToUnixTimeSeconds()),
@@ -283,16 +374,25 @@ public sealed class ConversationImportService(CodexPaths paths, string backupRoo
     }
 
     private async Task InsertCatalogRowsAsync(IReadOnlyList<ConversationImportCandidate> candidates,
-        ImportProviderMode providerMode, CancellationToken cancellationToken)
+        ImportProviderMode providerMode, ProjectRegistration? projectId, CancellationToken cancellationToken)
     {
         await using var connection = new SqliteConnection($"Data Source={paths.CatalogDatabase};Pooling=False");
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
         await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+        var hasProjectId = (await ReadColumnsAsync(connection, transaction, "local_thread_catalog", cancellationToken)
+            .ConfigureAwait(false)).Contains("project_id");
         foreach (var candidate in candidates)
         {
             await using var command = connection.CreateCommand();
             command.Transaction = transaction;
-            command.CommandText = """
+            command.CommandText = hasProjectId ? """
+                INSERT INTO local_thread_catalog
+                (host_id, thread_id, display_title, source_created_at, source_updated_at, cwd,
+                 source_kind, source_detail, model_provider, git_branch, observation_sequence,
+                 missing_candidate, thread_source, source_recency_at, pending_observed_title, project_id)
+                VALUES ('local', $id, $title, $created, $updated, $cwd, 'cli', NULL, $provider,
+                        NULL, $sequence, 0, 'user', $recency, 0, $project_id)
+                """ : """
                 INSERT INTO local_thread_catalog
                 (host_id, thread_id, display_title, source_created_at, source_updated_at, cwd,
                  source_kind, source_detail, model_provider, git_branch, observation_sequence,
@@ -304,10 +404,11 @@ public sealed class ConversationImportService(CodexPaths paths, string backupRoo
             command.Parameters.AddWithValue("$title", candidate.Title);
             command.Parameters.AddWithValue("$created", candidate.CreatedAt.ToUnixTimeSeconds());
             command.Parameters.AddWithValue("$updated", candidate.UpdatedAt.ToUnixTimeSeconds());
-            command.Parameters.AddWithValue("$cwd", candidate.Cwd);
+            command.Parameters.AddWithValue("$cwd", ResolveImportedCwd(candidate, projectId));
             command.Parameters.AddWithValue("$provider", providerMode == ImportProviderMode.CurrentLogin ? candidate.TargetProvider : candidate.SourceProvider);
             command.Parameters.AddWithValue("$sequence", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
             command.Parameters.AddWithValue("$recency", candidate.UpdatedAt.ToUnixTimeSeconds());
+            if (hasProjectId) command.Parameters.AddWithValue("$project_id", projectId?.StateId ?? (object)DBNull.Value);
             await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);

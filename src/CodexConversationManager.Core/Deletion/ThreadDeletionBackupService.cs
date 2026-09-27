@@ -28,9 +28,13 @@ public sealed class ThreadDeletionBackupService
             var existed = File.Exists(fullPath);
             if (existed)
             {
-                await using var source = new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-                await using var destination = new FileStream(copy, FileMode.CreateNew, FileAccess.Write, FileShare.None);
-                await source.CopyToAsync(destination, cancellationToken).ConfigureAwait(false);
+                if (SqliteSnapshot.IsDatabase(fullPath)) SqliteSnapshot.Copy(fullPath, copy);
+                else
+                {
+                    await using var source = new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                    await using var destination = new FileStream(copy, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+                    await source.CopyToAsync(destination, cancellationToken).ConfigureAwait(false);
+                }
             }
 
             entries.Add(new ThreadDeletionBackup.Entry(fullPath, copy, existed));
@@ -42,29 +46,43 @@ public sealed class ThreadDeletionBackupService
 
 public sealed class ThreadDeletionBackup(string directory, IReadOnlyList<ThreadDeletionBackup.Entry> entries) : IAsyncDisposable
 {
+    private bool _keepForRecovery;
+    public string DirectoryPath => directory;
     public sealed record Entry(string OriginalPath, string BackupPath, bool Existed);
 
     public async Task RestoreAsync(CancellationToken cancellationToken = default)
     {
-        foreach (var entry in entries)
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (!entry.Existed)
+            foreach (var entry in entries)
             {
-                if (File.Exists(entry.OriginalPath)) File.Delete(entry.OriginalPath);
-                continue;
-            }
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!entry.Existed)
+                {
+                    if (File.Exists(entry.OriginalPath)) File.Delete(entry.OriginalPath);
+                    continue;
+                }
 
-            Directory.CreateDirectory(Path.GetDirectoryName(entry.OriginalPath)!);
-            await using var source = new FileStream(entry.BackupPath, FileMode.Open, FileAccess.Read, FileShare.Read);
-            await using var destination = new FileStream(entry.OriginalPath, FileMode.Create, FileAccess.Write, FileShare.None);
-            await source.CopyToAsync(destination, cancellationToken).ConfigureAwait(false);
+                Directory.CreateDirectory(Path.GetDirectoryName(entry.OriginalPath)!);
+                if (SqliteSnapshot.IsDatabase(entry.OriginalPath)) SqliteSnapshot.Restore(entry.BackupPath, entry.OriginalPath);
+                else
+                {
+                    await using var source = new FileStream(entry.BackupPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+                    await using var destination = new FileStream(entry.OriginalPath, FileMode.Create, FileAccess.Write, FileShare.None);
+                    await source.CopyToAsync(destination, cancellationToken).ConfigureAwait(false);
+                }
+            }
+        }
+        catch
+        {
+            _keepForRecovery = true;
+            throw;
         }
     }
 
     public ValueTask DisposeAsync()
     {
-        if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        if (!_keepForRecovery && Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
         return ValueTask.CompletedTask;
     }
 }

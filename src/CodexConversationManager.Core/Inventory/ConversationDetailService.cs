@@ -28,8 +28,6 @@ public interface IConversationDetailProvider
 
 public sealed class ConversationDetailService(IConversationDetailReader? appServer, bool preferLocalSession = true) : IConversationDetailProvider
 {
-    private const int MaximumFallbackRecords = 512;
-    private const int MaximumBlockLength = 32 * 1024;
 
     public async Task<ConversationDetail> LoadAsync(
         ConversationRecord record,
@@ -82,7 +80,7 @@ public sealed class ConversationDetailService(IConversationDetailReader? appServ
                 var text = ReadString(value["text"]) ?? ReadString(value["message"]);
                 if (!string.IsNullOrWhiteSpace(text))
                 {
-                    blocks.Add(new ConversationDetailBlock(objectRole, kind, Limit(text)));
+                    blocks.Add(new ConversationDetailBlock(objectRole, kind, text));
                     return;
                 }
 
@@ -124,7 +122,8 @@ public sealed class ConversationDetailService(IConversationDetailReader? appServ
                 path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete,
                 bufferSize: 4096, FileOptions.Asynchronous | FileOptions.SequentialScan);
             using var reader = new StreamReader(stream);
-            for (var index = 0; index < MaximumFallbackRecords; index++)
+            string? previousEnvelope = null;
+            while (true)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var line = await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false);
@@ -142,14 +141,22 @@ public sealed class ConversationDetailService(IConversationDetailReader? appServ
                         continue;
                     }
 
-                    if (IsLegacyCompatibilityEvent(root) && blocks.Count > 0 &&
+                    var envelope = root.GetProperty("type").GetString();
+                    if (blocks.Count > 0 && previousEnvelope is not null &&
+                        !string.Equals(previousEnvelope, envelope, StringComparison.Ordinal) &&
                         string.Equals(blocks[^1].Role, message.Role, StringComparison.Ordinal) &&
                         string.Equals(blocks[^1].Text, message.Text, StringComparison.Ordinal))
                     {
                         continue;
                     }
 
-                    blocks.Add(new ConversationDetailBlock(message.Role, message.Kind, Limit(message.Text)));
+                    if (IsLegacyCompatibilityEvent(root) && blocks.Count > 0 &&
+                        string.Equals(blocks[^1].Role, message.Role, StringComparison.Ordinal) &&
+                        string.Equals(blocks[^1].Text, message.Text, StringComparison.Ordinal))
+                        continue;
+
+                    blocks.Add(new ConversationDetailBlock(message.Role, message.Kind, message.Text));
+                    previousEnvelope = envelope;
                 }
                 catch (JsonException)
                 {
@@ -181,6 +188,4 @@ public sealed class ConversationDetailService(IConversationDetailReader? appServ
     private static string? ReadString(JsonNode? value) =>
         value is JsonValue node && node.TryGetValue<string>(out var text) ? text : null;
 
-    private static string Limit(string text) =>
-        text.Length <= MaximumBlockLength ? text : text[..MaximumBlockLength];
 }
