@@ -1,4 +1,4 @@
-[English](README.md)
+[项目介绍](README.md)
 
 # Codex 对话管理器
 
@@ -43,5 +43,5 @@ CodexConversationManager.App.exe --codex-home "D:\fixture\.codex"
 
 ## 开源准备
 
-项目采用 [MIT License](LICENSE)。`.gitignore` 排除用户对话、数据库、日志、构建缓存和发布产物；开源前仍应人工确认未包含任何真实 `.codex` 数据或凭据。
+项目采用 [MIT 许可证](LICENSE)。`.gitignore` 排除用户对话、数据库、日志、构建缓存和发布产物；开源前仍应人工确认未包含任何真实 `.codex` 数据或凭据。
 
